@@ -5,12 +5,13 @@ from PyQt5.QtCore import Qt
 import os
 
 class MainWindow(QMainWindow):
-    def __init__(self, processor):
+    def __init__(self, processor, config):
         super().__init__()
         self.processor = processor
-        self.result_paths = []  # 存储批量处理结果路径
-        self.current_index = 0  # 当前显示的图片索引
-        self.current_model_name = "未选择模型"  # 当前模型名称
+        self.config = config
+        self.result_paths = []
+        self.current_index = 0
+        self.current_model_name = "未选择模型"
         self.init_ui()
         self.connect_signals()
 
@@ -26,10 +27,7 @@ class MainWindow(QMainWindow):
         self.model_menu = QMenu("Select Model", self)
         model_action = QAction("Select Model", self)
         model_action.setMenu(self.model_menu)
-        self.models = {
-            "Metal Nut": "models/mvtec_metal_nut/ckpt.pth",
-            "Screw": "/models/mvtec_screw/ckpt.pth"
-        }
+        self.models = self.config["models"]
         for model_name in self.models.keys():
             self.model_menu.addAction(model_name, lambda name=model_name: self.select_model(name))
         toolbar.addAction(model_action)
@@ -88,10 +86,8 @@ class MainWindow(QMainWindow):
     def select_model(self, model_name):
         model_path = self.models.get(model_name)
         if model_path:
-            from model_loader import load_model
             try:
-                model = load_model(model_path, self.processor.device)
-                self.processor.set_model(model, model_path)
+                self.processor.set_model(model_name, model_path)
                 self.current_model_name = model_name
                 self.model_label.setText(f"当前模型: {self.current_model_name}")
                 self.log_text.append(f"模型已切换为: {model_name} ({model_path})")
@@ -145,9 +141,9 @@ class MainWindow(QMainWindow):
     def update_buttons(self, single_mode=False):
         if single_mode:
             self.prev_button.setEnabled(False)
-            self.next_button.setEnabled(self.current_index < len(self.result_paths) - 1)
+            self.next_button.setEnabled(False)
         else:
-            self.prev_button.setEnabled(self.current_index > 0) 
+            self.prev_button.setEnabled(self.current_index > 0)
             self.next_button.setEnabled(self.current_index < len(self.result_paths) - 1)
 
     def update_log(self, message):

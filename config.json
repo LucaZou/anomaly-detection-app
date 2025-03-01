@@ -1,0 +1,7 @@
+{
+    "load_mode": "preload", 
+    "models": {
+        "Metal Nut": "models/mvtec_metal_nut/ckpt.pth",
+        "Screw": "models/mvtec_screw/ckpt.pth"
+    }
+  }

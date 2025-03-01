@@ -1,4 +1,15 @@
 # 使用示例
+## config.json
+- 配置文件：config.json
+```json
+{
+  "load_mode": "preload",  // "preload" 或 "ondemand"
+  "models": {
+    "Metal Nut": "models/mvtec_metal_nut/ckpt.pth",
+    "Bottle": "models/mvtec_bottle/ckpt.pth",
+  }
+}
+```
 ## 单张检测
 ```powershell
 detect_test1.py --input "data/mvtec_anomaly_detection/metal_nut/test/bent/001.png"

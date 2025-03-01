@@ -20,14 +20,15 @@ transform = transforms.Compose([
 ])
 
 class ImageProcessor(QObject):
-    progress_updated = pyqtSignal(int)  # 批量处理进度信号
-    log_message = pyqtSignal(str)      # 日志信号
-    batch_finished = pyqtSignal(list)  # 批量处理完成，返回结果路径列表
+    progress_updated = pyqtSignal(int)
+    log_message = pyqtSignal(str)
+    batch_finished = pyqtSignal(list)
 
-    def __init__(self, device):
+    def __init__(self, device, models=None):
         super().__init__()
-        self.model = None
         self.device = device
+        self.model_cache = models if models else {}  # 缓存预加载的模型
+        self.current_model_name = None
         self.model_path = None
         self.output_base_dir = "./output"
 
@@ -37,13 +38,23 @@ class ImageProcessor(QObject):
             self.output_base_dir = os.path.join("./output", model_dir)
             os.makedirs(self.output_base_dir, exist_ok=True)
 
-    def set_model(self, model, model_path):
-        self.model = model
-        self.model_path = model_path
+    def set_model(self, model_name, model_path=None):
+        if model_name in self.model_cache:
+            self.model = self.model_cache[model_name]
+            self.model_path = model_path or list(self.model_cache.keys())[list(self.model_cache.values()).index(self.model)]
+        elif model_path:
+            from model_loader import load_model
+            self.model = load_model(model_path, self.device)
+            self.model_cache[model_name] = self.model
+            self.model_path = model_path
+        else:
+            self.log_message.emit(f"模型 {model_name} 未找到且无路径提供！")
+            return
+        self.current_model_name = model_name
         self.update_output_dir()
 
     def detect_single_image(self, input_image_path):
-        if not self.model:
+        if not hasattr(self, 'model') or self.model is None:
             self.log_message.emit("请先选择模型！")
             return None
         try:
@@ -72,7 +83,7 @@ class ImageProcessor(QObject):
             raise
 
     def detect_batch_images(self, input_dir):
-        if not self.model:
+        if not hasattr(self, 'model') or self.model is None:
             self.log_message.emit("请先选择模型！")
             return None
         try:
