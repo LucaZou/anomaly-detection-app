@@ -1,12 +1,16 @@
 from PyQt5.QtWidgets import (QMainWindow, QLabel, QVBoxLayout, QHBoxLayout, QWidget, 
-                             QTextEdit, QProgressBar, QFileDialog, QAction, QToolBar)
+                             QTextEdit, QProgressBar, QFileDialog, QAction, QToolBar, QMenu, QPushButton)
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtCore import Qt
+import os
 
 class MainWindow(QMainWindow):
     def __init__(self, processor):
         super().__init__()
         self.processor = processor
+        self.result_paths = []  # 存储批量处理结果路径
+        self.current_index = 0  # 当前显示的图片索引
+        self.current_model_name = "未选择模型"  # 当前模型名称
         self.init_ui()
         self.connect_signals()
 
@@ -17,6 +21,19 @@ class MainWindow(QMainWindow):
         # 工具栏
         toolbar = QToolBar("Tools")
         self.addToolBar(toolbar)
+        
+        # 模型选择菜单
+        self.model_menu = QMenu("Select Model", self)
+        model_action = QAction("Select Model", self)
+        model_action.setMenu(self.model_menu)
+        self.models = {
+            "Metal Nut": "models/mvtec_metal_nut/ckpt.pth",
+            "Screw": "/models/mvtec_screw/ckpt.pth"
+        }
+        for model_name in self.models.keys():
+            self.model_menu.addAction(model_name, lambda name=model_name: self.select_model(name))
+        toolbar.addAction(model_action)
+
         self.single_action = QAction("Detect Single Image", self)
         self.batch_action = QAction("Detect Batch Images", self)
         toolbar.addAction(self.single_action)
@@ -27,11 +44,29 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(main_widget)
         layout = QVBoxLayout(main_widget)
 
+        # 状态信息
+        self.model_label = QLabel(f"当前模型: {self.current_model_name}")
+        self.image_label_info = QLabel("当前图片: 未加载")
+        layout.addWidget(self.model_label)
+        layout.addWidget(self.image_label_info)
+
         # 图像显示区
         self.image_label = QLabel("No image loaded")
         self.image_label.setAlignment(Qt.AlignCenter)
-        self.image_label.setMinimumSize(576, 288)  # 适应并排显示的combined_image
+        self.image_label.setMinimumSize(576, 288)
         layout.addWidget(self.image_label)
+
+        # 切换按钮
+        button_layout = QHBoxLayout()
+        self.prev_button = QPushButton("Previous")
+        self.next_button = QPushButton("Next")
+        self.prev_button.clicked.connect(self.prev_image)
+        self.next_button.clicked.connect(self.next_image)
+        self.prev_button.setEnabled(False)
+        self.next_button.setEnabled(False)
+        button_layout.addWidget(self.prev_button)
+        button_layout.addWidget(self.next_button)
+        layout.addLayout(button_layout)
 
         # 进度条
         self.progress_bar = QProgressBar()
@@ -48,14 +83,31 @@ class MainWindow(QMainWindow):
         self.batch_action.triggered.connect(self.detect_batch)
         self.processor.log_message.connect(self.update_log)
         self.processor.progress_updated.connect(self.update_progress)
+        self.processor.batch_finished.connect(self.show_batch_results)
+
+    def select_model(self, model_name):
+        model_path = self.models.get(model_name)
+        if model_path:
+            from model_loader import load_model
+            try:
+                model = load_model(model_path, self.processor.device)
+                self.processor.set_model(model, model_path)
+                self.current_model_name = model_name
+                self.model_label.setText(f"当前模型: {self.current_model_name}")
+                self.log_text.append(f"模型已切换为: {model_name} ({model_path})")
+            except Exception as e:
+                self.log_text.append(f"加载模型失败: {str(e)}")
 
     def detect_single(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "选择图片", "", "Images (*.png *.jpg)")
         if file_path:
             output_path = self.processor.detect_single_image(file_path)
             if output_path:
-                pixmap = QPixmap(output_path)
-                self.image_label.setPixmap(pixmap.scaled(self.image_label.size(), Qt.KeepAspectRatio))
+                self.show_result(output_path)
+                self.result_paths = [output_path]
+                self.current_index = 0
+                self.update_buttons(single_mode=False)
+                self.image_label_info.setText(f"当前图片: {os.path.basename(output_path)}")
 
     def detect_batch(self):
         folder_path = QFileDialog.getExistingDirectory(self, "选择文件夹")
@@ -63,6 +115,40 @@ class MainWindow(QMainWindow):
             self.progress_bar.setVisible(True)
             self.processor.detect_batch_images(folder_path)
             self.progress_bar.setVisible(False)
+
+    def show_result(self, output_path):
+        pixmap = QPixmap(output_path)
+        self.image_label.setPixmap(pixmap.scaled(self.image_label.size(), Qt.KeepAspectRatio))
+
+    def show_batch_results(self, output_paths):
+        self.result_paths = output_paths
+        self.current_index = 0
+        if self.result_paths:
+            self.show_result(self.result_paths[self.current_index])
+            self.update_buttons(single_mode=False)
+            self.image_label_info.setText(f"当前图片: {os.path.basename(self.result_paths[self.current_index])}")
+
+    def prev_image(self):
+        if self.current_index > 0:
+            self.current_index -= 1
+            self.show_result(self.result_paths[self.current_index])
+            self.image_label_info.setText(f"当前图片: {os.path.basename(self.result_paths[self.current_index])}")
+            self.update_buttons(single_mode=False)
+
+    def next_image(self):
+        if self.current_index < len(self.result_paths) - 1:
+            self.current_index += 1
+            self.show_result(self.result_paths[self.current_index])
+            self.image_label_info.setText(f"当前图片: {os.path.basename(self.result_paths[self.current_index])}")
+            self.update_buttons(single_mode=False)
+
+    def update_buttons(self, single_mode=False):
+        if single_mode:
+            self.prev_button.setEnabled(False)
+            self.next_button.setEnabled(self.current_index < len(self.result_paths) - 1)
+        else:
+            self.prev_button.setEnabled(self.current_index > 0) 
+            self.next_button.setEnabled(self.current_index < len(self.result_paths) - 1)
 
     def update_log(self, message):
         self.log_text.append(message)

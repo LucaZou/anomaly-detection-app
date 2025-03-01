@@ -4,7 +4,6 @@ import torch
 import logging
 from PyQt5.QtWidgets import QApplication
 from gui import MainWindow
-from model_loader import load_model
 from image_processor import ImageProcessor
 
 # 配置日志
@@ -20,15 +19,9 @@ logging.basicConfig(
 )
 
 def main():
-    # 初始化设备和模型
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    model_path = "models/mvtec_metal_nut/ckpt.pth"
-    model = load_model(model_path, device)
-    
-    # 初始化图像处理器
-    processor = ImageProcessor(model, device)
+    processor = ImageProcessor(device)  # 不加载默认模型
 
-    # 启动 GUI
     app = QApplication(sys.argv)
     window = MainWindow(processor)
     window.show()
