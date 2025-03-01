@@ -38,14 +38,18 @@ class BatchDetectWorker(QThread):
             return
 
         output_paths = []
+        detection_infos = []  # 新增：存储每张图片的检测信息
         for i, input_image_path in enumerate(tqdm(image_paths, desc="批量检测图片")):
-            output_path = self.processor.detect_single_image(input_image_path)
+            output_path, info = self.processor.detect_single_image(input_image_path)  # 修改：接收返回的提示信息
+            # output_path = self.processor.detect_single_image(input_image_path)
             if output_path:
                 output_paths.append(output_path)
+                detection_infos.append(info)  # 新增：存储检测信息
             self.progress_updated.emit(int((i + 1) / len(image_paths) * 100))
 
         self.log_message.emit(f"批量检测结果已保存到 {self.processor.output_base_dir}")
-        self.batch_finished.emit(output_paths)
+        # self.batch_finished.emit(output_paths)
+        self.batch_finished.emit([output_paths, detection_infos])  # 修改：传递路径和信息列表
 
 class ImageProcessor(QObject):
     # 图像处理器类，用于处理图像检测任务
@@ -98,9 +102,31 @@ class ImageProcessor(QObject):
             with torch.no_grad():
                 scores, masks, _ = self.model.predict(image_tensor) # 模型推理
                 # 日志输出scores
-                self.log_message.emit(f"检测结果: {scores[0].item()}")
+                # self.log_message.emit(f"检测结果: {scores[0].item()}") # 输出第一个元素的值
                 anomaly_map = masks[0] # 获取异常图
 
+            # scores 是单值列表，直接取第一个元素
+            score = float(scores[0]) if not torch.is_tensor(scores[0]) else scores[0].item()
+
+            # 处理 scores 列表的情况(处理多种类型的模型)
+            # if isinstance(scores, list):  # 检查 scores 是否为列表
+            #     if len(scores) == 1:  # 如果列表只有一项，取第一个值
+            #         score = float(scores[0]) if not torch.is_tensor(scores[0]) else scores[0].item()
+            #     else:  # 如果列表有多项，取最大值（假设最大值代表最可能的异常）
+            #         score = max([float(s) if not torch.is_tensor(s) else s.item() for s in scores])
+            # elif torch.is_tensor(scores):  # 如果是张量，取标量值
+            #     score = scores.item()
+            # else:  # 其他情况，直接尝试转换为浮点数
+            #     score = float(scores)
+            
+            # 生成检测信息
+            threshold = 1.3  # 可调整的阈值
+            detection_info = f"异常得分: {score:.2f} - "
+            if score > threshold:
+                detection_info += "检测到异常"
+            else:
+                detection_info += "图像正常"
+            
             # 归一化异常图
             anomaly_map = anomaly_map.squeeze()
             anomaly_map = (anomaly_map - anomaly_map.min()) / (anomaly_map.max() - anomaly_map.min() + 1e-8)
@@ -116,10 +142,12 @@ class ImageProcessor(QObject):
             output_path = os.path.join(self.output_base_dir, f"detection_{input_filename}.png")
             plt.imsave(output_path, combined_image)
             self.log_message.emit(f"检测结果已保存到 {output_path}")
-            return output_path
+            return output_path, detection_info  # 修改：返回输出路径和提示信息
         except Exception as e:
-            self.log_message.emit(f"检测单张图片时发生错误: {str(e)}")
-            raise
+            error_msg = f"检测单张图片时发生错误: {str(e)}"
+            self.log_message.emit(error_msg)
+            return None, error_msg
+            
 
     def detect_batch_images(self, input_dir):
         # 批量检测图片

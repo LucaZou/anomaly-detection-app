@@ -13,6 +13,7 @@ class MainWindow(QMainWindow):
         self.result_paths = [] # 批量检测结果路径
         self.current_index = 0 # 当前显示的结果索引
         self.current_model_name = "未选择模型" # 当前模型名称
+        self.detection_infos = []  # 存储检测信息
         self.init_ui() # 初始化界面
         self.connect_signals() # 连接信号和槽
 
@@ -48,8 +49,11 @@ class MainWindow(QMainWindow):
         # 状态信息
         self.model_label = QLabel(f"当前模型: {self.current_model_name}")
         self.image_label_info = QLabel("当前图片: 未加载")
+        # 新增：检测信息标签
+        self.detection_info_label = QLabel("检测信息: 未检测")
         layout.addWidget(self.model_label)
         layout.addWidget(self.image_label_info)
+        layout.addWidget(self.detection_info_label)
 
         # 图像显示区
         self.image_label = QLabel("No image loaded")
@@ -106,13 +110,16 @@ class MainWindow(QMainWindow):
         # 检测单张图片
         file_path, _ = QFileDialog.getOpenFileName(self, "选择图片", "", "Images (*.png *.jpg)")
         if file_path:
-            output_path = self.processor.detect_single_image(file_path)
+            # output_path = self.processor.detect_single_image(file_path)
+            output_path, detection_info = self.processor.detect_single_image(file_path)  # 修改：接收检测信息
             if output_path:
                 self.show_result(output_path)
                 self.result_paths = [output_path]
+                self.detection_infos = [detection_info]  # 新增：存储检测信息
                 self.current_index = 0
                 self.update_buttons(single_mode=False)
                 self.image_label_info.setText(f"当前图片: {os.path.basename(output_path)}")
+                self.detection_info_label.setText(f"检测信息: {detection_info}")  # 新增：更新检测信息
 
     def detect_batch(self):
         # 批量检测文件夹中的图片
@@ -127,14 +134,18 @@ class MainWindow(QMainWindow):
         pixmap = QPixmap(output_path)
         self.image_label.setPixmap(pixmap.scaled(self.image_label.size(), Qt.KeepAspectRatio))
 
-    def show_batch_results(self, output_paths):
-        # 显示批量检测结果
+    def show_batch_results(self, results):
+        # 修改：接收路径和检测信息
+        output_paths, detection_infos = results
         self.result_paths = output_paths
+        self.detection_infos = detection_infos
         self.current_index = 0
         if self.result_paths:
             self.show_result(self.result_paths[self.current_index])
             self.update_buttons(single_mode=False)
             self.image_label_info.setText(f"当前图片: {os.path.basename(self.result_paths[self.current_index])}")
+            self.detection_info_label.setText(f"检测信息: {self.detection_infos[self.current_index]}")  # 新增：显示检测信息
+        self.progress_bar.setVisible(False)
 
     def prev_image(self):
         # 显示上一张图片
@@ -142,6 +153,8 @@ class MainWindow(QMainWindow):
             self.current_index -= 1
             self.show_result(self.result_paths[self.current_index])
             self.image_label_info.setText(f"当前图片: {os.path.basename(self.result_paths[self.current_index])}")
+            # 修改：同步更新检测信息
+            self.detection_info_label.setText(f"检测信息: {self.detection_infos[self.current_index]}")
             self.update_buttons(single_mode=False)
 
     def next_image(self):
@@ -150,6 +163,8 @@ class MainWindow(QMainWindow):
             self.current_index += 1
             self.show_result(self.result_paths[self.current_index])
             self.image_label_info.setText(f"当前图片: {os.path.basename(self.result_paths[self.current_index])}")
+            # 修改：同步更新检测信息
+            self.detection_info_label.setText(f"检测信息: {self.detection_infos[self.current_index]}")
             self.update_buttons(single_mode=False)
 
     def update_buttons(self, single_mode=False):
