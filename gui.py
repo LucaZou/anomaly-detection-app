@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import (QMainWindow, QLabel, QVBoxLayout, QHBoxLayout, QWidget, 
+from PyQt5.QtWidgets import (QMainWindow, QLabel, QVBoxLayout, QHBoxLayout, QWidget, QMessageBox,
                              QTextEdit, QProgressBar, QFileDialog, QAction, QToolBar, QMenu, QPushButton)
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtCore import Qt
@@ -97,7 +97,10 @@ class MainWindow(QMainWindow):
                 self.model_label.setText(f"当前模型: {self.current_model_name}")
                 self.log_text.append(f"模型已切换为: {model_name} ({model_path})")
             except Exception as e:
-                self.log_text.append(f"加载模型失败: {str(e)}")
+                error_msg = f"加载模型失败: {str(e)}"
+                self.log_text.append(error_msg)
+                # 新增：显示错误提示框
+                QMessageBox.critical(self, "错误", error_msg)
 
     def detect_single(self):
         # 检测单张图片
@@ -117,7 +120,7 @@ class MainWindow(QMainWindow):
         if folder_path:
             self.progress_bar.setVisible(True)
             self.processor.detect_batch_images(folder_path)
-            self.progress_bar.setVisible(False)
+            # self.progress_bar.setVisible(False)
 
     def show_result(self, output_path):
         # 显示检测结果

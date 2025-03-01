@@ -7,7 +7,7 @@ from torchvision import transforms
 import glob
 from tqdm import tqdm
 import logging
-from PyQt5.QtCore import pyqtSignal, QObject
+from PyQt5.QtCore import pyqtSignal, QObject, QThread
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +18,34 @@ transform = transforms.Compose([
     transforms.ToTensor(), # 转为 Tensor张量
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]), # 标准化
 ])
+
+# 定义批量检测的工作线程
+class BatchDetectWorker(QThread):
+    progress_updated = pyqtSignal(int)  # 进度信号
+    log_message = pyqtSignal(str)      # 日志信号
+    batch_finished = pyqtSignal(list)  # 完成信号
+
+    def __init__(self, processor, input_dir):
+        super().__init__()
+        self.processor = processor
+        self.input_dir = input_dir
+
+    def run(self):
+        # 在线程中执行批量检测
+        image_paths = glob.glob(os.path.join(self.input_dir, "*.jpg")) + glob.glob(os.path.join(self.input_dir, "*.png"))
+        if not image_paths:
+            self.log_message.emit(f"在 {self.input_dir} 中未找到任何图片")
+            return
+
+        output_paths = []
+        for i, input_image_path in enumerate(tqdm(image_paths, desc="批量检测图片")):
+            output_path = self.processor.detect_single_image(input_image_path)
+            if output_path:
+                output_paths.append(output_path)
+            self.progress_updated.emit(int((i + 1) / len(image_paths) * 100))
+
+        self.log_message.emit(f"批量检测结果已保存到 {self.processor.output_base_dir}")
+        self.batch_finished.emit(output_paths)
 
 class ImageProcessor(QObject):
     # 图像处理器类，用于处理图像检测任务
@@ -33,6 +61,7 @@ class ImageProcessor(QObject):
         self.current_model_name = None # 当前模型名称
         self.model_path = None # 当前模型路径
         self.output_base_dir = "./output" # 输出目录
+        self.batch_worker = None # 存储工作线程对象
 
     def update_output_dir(self):
         # 根据模型路径更新输出目录
@@ -68,6 +97,8 @@ class ImageProcessor(QObject):
 
             with torch.no_grad():
                 scores, masks, _ = self.model.predict(image_tensor) # 模型推理
+                # 日志输出scores
+                self.log_message.emit(f"检测结果: {scores[0].item()}")
                 anomaly_map = masks[0] # 获取异常图
 
             # 归一化异常图
@@ -95,23 +126,30 @@ class ImageProcessor(QObject):
         if not hasattr(self, 'model') or self.model is None:
             self.log_message.emit("请先选择模型！")
             return None
-        try:
-            # 获取目录下所有图片路径
-            image_paths = glob.glob(os.path.join(input_dir, "*.jpg")) + glob.glob(os.path.join(input_dir, "*.png"))
-            if not image_paths:
-                self.log_message.emit(f"在 {input_dir} 中未找到任何图片")
-                return None
+        # 创建并启动工作线程
+        self.batch_worker = BatchDetectWorker(self, input_dir)
+        self.batch_worker.progress_updated.connect(self.progress_updated.emit)
+        self.batch_worker.log_message.connect(self.log_message.emit)
+        self.batch_worker.batch_finished.connect(self.batch_finished.emit)
+        self.batch_worker.start()
+        return None  # 返回 None，因为结果通过信号异步传递
+        # try:
+        #     # 获取目录下所有图片路径
+        #     image_paths = glob.glob(os.path.join(input_dir, "*.jpg")) + glob.glob(os.path.join(input_dir, "*.png"))
+        #     if not image_paths:
+        #         self.log_message.emit(f"在 {input_dir} 中未找到任何图片")
+        #         return None
+            
+        #     output_paths = []
+        #     for i, input_image_path in enumerate(tqdm(image_paths, desc="批量检测图片")):
+        #         output_path = self.detect_single_image(input_image_path)
+        #         if output_path:
+        #             output_paths.append(output_path)
+        #         self.progress_updated.emit(int((i + 1) / len(image_paths) * 100))
 
-            output_paths = []
-            for i, input_image_path in enumerate(tqdm(image_paths, desc="批量检测图片")):
-                output_path = self.detect_single_image(input_image_path)
-                if output_path:
-                    output_paths.append(output_path)
-                self.progress_updated.emit(int((i + 1) / len(image_paths) * 100))
-
-            self.log_message.emit(f"批量检测结果已保存到 {self.output_base_dir}")
-            self.batch_finished.emit(output_paths)
-            return self.output_base_dir
-        except Exception as e:
-            self.log_message.emit(f"批量检测过程中发生错误: {str(e)}")
-            raise
+        #     self.log_message.emit(f"批量检测结果已保存到 {self.output_base_dir}")
+        #     self.batch_finished.emit(output_paths)
+        #     return self.output_base_dir
+        # except Exception as e:
+        #     self.log_message.emit(f"批量检测过程中发生错误: {str(e)}")
+        #     raise
