@@ -1,8 +1,40 @@
-from PyQt5.QtWidgets import (QMainWindow, QLabel, QVBoxLayout, QHBoxLayout, QWidget, QMessageBox,
-                             QTextEdit, QProgressBar, QFileDialog, QAction, QToolBar, QMenu, QPushButton)
+from PyQt5.QtWidgets import (
+    QMainWindow, QLabel, QVBoxLayout, QHBoxLayout, QWidget, QMessageBox, QFormLayout, QDialog,
+    QDoubleSpinBox,QTextEdit, QProgressBar, QFileDialog, QAction, QToolBar, QMenu, QPushButton)
 from PyQt5.QtGui import QPixmap
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, pyqtSignal
 import os
+
+# 定义设置窗口类
+class SettingsDialog(QDialog):
+    threshold_changed = pyqtSignal(float)  # 信号：阈值更改时通知主窗口
+
+    def __init__(self, current_threshold, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Settings")
+        self.init_ui(current_threshold)
+
+    def init_ui(self, current_threshold):
+        layout = QFormLayout()
+
+        # 动态阈值配置
+        self.threshold_spinbox = QDoubleSpinBox()
+        self.threshold_spinbox.setRange(0.0, 2.0)  # 阈值范围 0.0 - 1.0
+        self.threshold_spinbox.setSingleStep(0.05)  # 步长 0.01
+        self.threshold_spinbox.setValue(current_threshold)  # 默认值
+        layout.addRow("Anomaly Threshold:", self.threshold_spinbox)
+
+        # 保存按钮
+        save_button = QPushButton("Save")
+        save_button.clicked.connect(self.save_settings)
+        layout.addWidget(save_button)
+
+        self.setLayout(layout)
+
+    def save_settings(self):
+        threshold = self.threshold_spinbox.value()
+        self.threshold_changed.emit(threshold)  # 发射信号通知阈值更新
+        self.accept()  # 关闭对话框
 
 class MainWindow(QMainWindow):
     # 主窗口类，定义 GUI 界面和交互逻辑
@@ -14,6 +46,7 @@ class MainWindow(QMainWindow):
         self.current_index = 0 # 当前显示的结果索引
         self.current_model_name = "未选择模型" # 当前模型名称
         self.detection_infos = []  # 存储检测信息
+        self.threshold = 1.2  # 新增：默认阈值，初始为 0.5
         self.init_ui() # 初始化界面
         self.connect_signals() # 连接信号和槽
 
@@ -40,6 +73,11 @@ class MainWindow(QMainWindow):
         self.batch_action = QAction("Detect Batch Images", self)
         toolbar.addAction(self.single_action)
         toolbar.addAction(self.batch_action)
+
+        # 设置菜单
+        settings_action = QAction("Settings", self)
+        settings_action.triggered.connect(self.open_settings)
+        toolbar.addAction(settings_action)
 
         # 主布局
         main_widget = QWidget()
@@ -110,8 +148,8 @@ class MainWindow(QMainWindow):
         # 检测单张图片
         file_path, _ = QFileDialog.getOpenFileName(self, "选择图片", "", "Images (*.png *.jpg)")
         if file_path:
-            # output_path = self.processor.detect_single_image(file_path)
-            output_path, detection_info = self.processor.detect_single_image(file_path)  # 修改：接收检测信息
+            # output_path, detection_info = self.processor.detect_single_image(file_path)  # 接收检测信息
+            output_path, detection_info = self.processor.detect_single_image(file_path, self.threshold) # 接收检测信息，传递阈值
             if output_path:
                 self.show_result(output_path)
                 self.result_paths = [output_path]
@@ -126,7 +164,8 @@ class MainWindow(QMainWindow):
         folder_path = QFileDialog.getExistingDirectory(self, "选择文件夹")
         if folder_path:
             self.progress_bar.setVisible(True)
-            self.processor.detect_batch_images(folder_path)
+            # self.processor.detect_batch_images(folder_path)
+            self.processor.detect_batch_images(folder_path, self.threshold)  # 修改：传递阈值
             # self.progress_bar.setVisible(False)
 
     def show_result(self, output_path):
@@ -183,3 +222,20 @@ class MainWindow(QMainWindow):
     def update_progress(self, value):
         # 更新进度条
         self.progress_bar.setValue(value)
+
+    # 新增：打开设置窗口
+    def open_settings(self):
+        dialog = SettingsDialog(self.threshold, self)
+        dialog.threshold_changed.connect(self.update_threshold)  # 连接信号
+        dialog.exec_()
+
+    # 新增：更新阈值并刷新检测信息
+    def update_threshold(self, new_threshold):
+        self.threshold = new_threshold
+        self.log_text.append(f"阈值已更新为: {self.threshold}")
+        # 如果已有检测结果，重新计算检测信息
+        if self.result_paths and self.detection_infos:
+            for i in range(len(self.detection_infos)):
+                score = float(self.detection_infos[i].split("异常得分: ")[1].split(" - ")[0])
+                self.detection_infos[i] = f"异常得分: {score:.2f} - {'检测到异常' if score > self.threshold else '图像正常'}"
+            self.detection_info_label.setText(f"检测信息: {self.detection_infos[self.current_index]}")

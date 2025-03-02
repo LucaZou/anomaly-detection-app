@@ -25,10 +25,11 @@ class BatchDetectWorker(QThread):
     log_message = pyqtSignal(str)      # 日志信号
     batch_finished = pyqtSignal(list)  # 完成信号
 
-    def __init__(self, processor, input_dir):
+    def __init__(self, processor, input_dir, threshold):  # 新增：接收阈值
         super().__init__()
         self.processor = processor
         self.input_dir = input_dir
+        self.threshold = threshold  # 新增：接收阈值
 
     def run(self):
         # 在线程中执行批量检测
@@ -40,8 +41,8 @@ class BatchDetectWorker(QThread):
         output_paths = []
         detection_infos = []  # 新增：存储每张图片的检测信息
         for i, input_image_path in enumerate(tqdm(image_paths, desc="批量检测图片")):
-            output_path, info = self.processor.detect_single_image(input_image_path)  # 修改：接收返回的提示信息
-            # output_path = self.processor.detect_single_image(input_image_path)
+            # output_path, info = self.processor.detect_single_image(input_image_path)  # 接收返回的提示信息
+            output_path, info = self.processor.detect_single_image(input_image_path, self.threshold)  # 修改：传递阈值
             if output_path:
                 output_paths.append(output_path)
                 detection_infos.append(info)  # 新增：存储检测信息
@@ -90,7 +91,7 @@ class ImageProcessor(QObject):
         self.current_model_name = model_name
         self.update_output_dir()
 
-    def detect_single_image(self, input_image_path):
+    def detect_single_image(self, input_image_path, threshold=1.3):  # 新增：接收阈值
         # 检测单张图片
         if not hasattr(self, 'model') or self.model is None:
             self.log_message.emit("请先选择模型！")
@@ -149,13 +150,14 @@ class ImageProcessor(QObject):
             return None, error_msg
             
 
-    def detect_batch_images(self, input_dir):
+    def detect_batch_images(self, input_dir, threshold=1.3):  # 新增：接收阈值
         # 批量检测图片
         if not hasattr(self, 'model') or self.model is None:
             self.log_message.emit("请先选择模型！")
             return None
         # 创建并启动工作线程
-        self.batch_worker = BatchDetectWorker(self, input_dir)
+        self.batch_worker = BatchDetectWorker(self, input_dir, threshold)  # 修改：传递阈值
+        # self.batch_worker = BatchDetectWorker(self, input_dir)
         self.batch_worker.progress_updated.connect(self.progress_updated.emit)
         self.batch_worker.log_message.connect(self.log_message.emit)
         self.batch_worker.batch_finished.connect(self.batch_finished.emit)
