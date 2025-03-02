@@ -8,6 +8,7 @@ from gui import MainWindow
 from model_loader import load_model
 from image_processor import ImageProcessor
 import yaml
+from progress_dialog import ProgressDialog, ProgressWorker  # 新增：导入进度对话框
 
 # 配置日志
 log_dir = "./logs"
@@ -31,15 +32,36 @@ def load_config():
         logger.error(f"加载配置文件失败: {str(e)}")
         raise
 
-def preload_models(device, config):
-    # 预加载模型
+# def preload_models(device, config):
+#     # 预加载模型
+#     models = {}
+#     for name, path in config["models"].items():
+#         try:
+#             models[name] = load_model(path, device)
+#             logger.info(f"预加载模型: {name} ({path})")
+#         except Exception as e:
+#             logger.error(f"预加载模型 {name} 失败: {str(e)}")
+#     return models
+
+def preload_models(device, config, progress_dialog=None):
+    """预加载所有模型，支持进度更新"""
     models = {}
-    for name, path in config["models"].items():
+    model_configs = config["models"]
+    total_tasks = len(model_configs)
+
+    for i, (name, path) in enumerate(model_configs.items()):
         try:
+            if progress_dialog:
+                progress_dialog.set_description(f"Loading model: {name} ({i+1}/{total_tasks})")
             models[name] = load_model(path, device)
             logger.info(f"预加载模型: {name} ({path})")
+            if progress_dialog:
+                progress_dialog.update_progress(1)  # 每次加载完成更新进度
         except Exception as e:
             logger.error(f"预加载模型 {name} 失败: {str(e)}")
+            # 如果有进度对话框，继续加载其他模型；否则抛出异常
+            if not progress_dialog:
+                raise
     return models
 
 def main():
@@ -49,15 +71,24 @@ def main():
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     logger.info(f"使用设备: {device}")
 
+    # 启动GUI
+    app = QApplication(sys.argv)
+
     # 根据加载模式初始化处理器
     if config["load_mode"] == "preload":
-        model_cache = preload_models(device, config) # 预加载模型
+        # 新增：在预加载模式下显示进度对话框
+        progress_dialog = ProgressDialog(
+            total_tasks=len(config["models"]),
+            description="Preloading models..."
+        )
+        progress_dialog.show()
+        model_cache = preload_models(device, config,progress_dialog) # 预加载模型
         processor = ImageProcessor(device, model_cache) # 初始化处理器并传入模型缓存
+        progress_dialog.accept()  # 加载完成后关闭对话框
     else:  # "ondemand"
         processor = ImageProcessor(device) # 不预加载模型，需要时再加载
 
-    # 启动GUI
-    app = QApplication(sys.argv)
+    
     window = MainWindow(processor, config)
     window.show()
     sys.exit(app.exec_())

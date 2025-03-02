@@ -5,6 +5,8 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtGui import QPixmap, QIcon
 from PyQt5.QtCore import Qt, pyqtSignal, QSize
 import os
+import yaml
+from progress_dialog import ProgressDialog, ProgressWorker  # 新增：导入进度对话框
 
 # 定义设置窗口类
 class SettingsDialog(QDialog):
@@ -47,10 +49,8 @@ class MainWindow(QMainWindow):
         self.current_index = 0 # 当前显示的结果索引
         self.current_model_name = "未选择模型" # 当前模型名称
         self.detection_infos = []  # 存储检测信息
-        self.threshold = 1.2  # 新增：默认阈值，初始为 0.5
-        # 缩略图分页相关属性
-        # self.thumbnails_per_page = 5  # 每页显示 5 个缩略图
-        # self.current_page = 0  # 当前页码
+        # self.threshold = 1.2  # 默认阈值，初始为 1.2
+        self.threshold = config.get("threshold", 1.2) # 修改：从 config 中读取初始阈值，若无则默认为 1.2
         self.init_ui() # 初始化界面
         self.connect_signals() # 连接信号和槽
 
@@ -158,20 +158,63 @@ class MainWindow(QMainWindow):
         self.processor.progress_updated.connect(self.update_progress)
         self.processor.batch_finished.connect(self.show_batch_results)
 
+    # def select_model(self, model_name):
+    #     # 选择模型
+    #     model_path = self.models.get(model_name)
+    #     if model_path:
+    #         try:
+    #             self.processor.set_model(model_name, model_path) # 设置当前模型
+    #             self.current_model_name = model_name
+    #             self.model_label.setText(f"当前模型: {self.current_model_name}")
+    #             self.log_text.append(f"模型已切换为: {model_name} ({model_path})")
+    #         except Exception as e:
+    #             error_msg = f"加载模型失败: {str(e)}"
+    #             self.log_text.append(error_msg)
+    #             # 新增：显示错误提示框
+    #             QMessageBox.critical(self, "错误", error_msg)
+
     def select_model(self, model_name):
-        # 选择模型
+        """选择模型并显示加载进度"""
         model_path = self.models.get(model_name)
-        if model_path:
-            try:
-                self.processor.set_model(model_name, model_path) # 设置当前模型
+        if not model_path:
+            self.log_text.append(f"模型 {model_name} 未找到！")
+            return
+
+        # 如果模型已加载，直接切换
+        if model_name in self.processor.model_cache:
+            self.processor.set_model(model_name, model_path)
+            self.current_model_name = model_name
+            self.model_label.setText(f"当前模型: {self.current_model_name}")
+            self.log_text.append(f"模型已切换为: {model_name} (已缓存)")
+            return
+
+        # 新增：显示进度对话框并加载模型
+        progress_dialog = ProgressDialog(
+            total_tasks=1,  # 单个模型加载
+            description=f"Loading model: {model_name}",
+            parent=self
+        )
+        worker = ProgressWorker(
+            self.processor.set_model,
+            model_name,
+            model_path
+        )
+
+        def on_finished(result):
+            progress_dialog.update_progress(1)  # 加载完成，进度满
+            if isinstance(result, Exception):
+                error_msg = f"加载模型失败: {str(result)}"
+                self.log_text.append(error_msg)
+                QMessageBox.critical(self, "错误", error_msg)
+            else:
                 self.current_model_name = model_name
                 self.model_label.setText(f"当前模型: {self.current_model_name}")
                 self.log_text.append(f"模型已切换为: {model_name} ({model_path})")
-            except Exception as e:
-                error_msg = f"加载模型失败: {str(e)}"
-                self.log_text.append(error_msg)
-                # 新增：显示错误提示框
-                QMessageBox.critical(self, "错误", error_msg)
+            progress_dialog.accept()
+
+        worker.finished.connect(on_finished)
+        worker.start()
+        progress_dialog.exec_()  # 模态显示，直到加载完成
 
     def detect_single(self):
         # 检测单张图片
@@ -267,6 +310,10 @@ class MainWindow(QMainWindow):
     def update_threshold(self, new_threshold):
         self.threshold = new_threshold
         self.log_text.append(f"阈值已更新为: {self.threshold}")
+        # 新增：将阈值保存到 config.yaml
+        self.config["threshold"] = self.threshold
+        with open("config.yaml", "w", encoding="utf-8") as f:
+            yaml.safe_dump(self.config, f, allow_unicode=True)
         # 如果已有检测结果，重新计算检测信息
         if self.result_paths and self.detection_infos:
             for i in range(len(self.detection_infos)):

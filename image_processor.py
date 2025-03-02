@@ -202,8 +202,9 @@ class ImageProcessor(QObject):
             return
         self.current_model_name = model_name
         self.update_output_dir()
+        return None
 
-    def detect_single_image(self, input_image_path, threshold=1.3):  # 新增：接收阈值
+    def detect_single_image(self, input_image_path, threshold):
         # 检测单张图片
         if not hasattr(self, 'model') or self.model is None:
             self.log_message.emit("请先选择模型！")
@@ -233,7 +234,6 @@ class ImageProcessor(QObject):
             #     score = float(scores)
             
             # 生成检测信息
-            threshold = 1.3  # 可调整的阈值
             detection_info = f"异常得分: {score:.2f} - "
             if score > threshold:
                 detection_info += "检测到异常"
@@ -262,7 +262,7 @@ class ImageProcessor(QObject):
             return None, error_msg
             
 
-    def detect_batch_images(self, input_dir, threshold=1.3):  # 新增：接收阈值
+    def detect_batch_images(self, input_dir, threshold):  # 新增：接收阈值
         # 批量检测图片
         if not hasattr(self, 'model') or self.model is None:
             self.log_message.emit("请先选择模型！")
