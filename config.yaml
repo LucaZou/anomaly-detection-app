@@ -1,6 +1,6 @@
 # Anomaly Detection App 的配置文件
 # 定义模型加载模式，可选值：preload（预加载所有模型）或 ondemand（按需加载）
-load_mode: ondemand
+load_mode: preload
 
 # 模型配置，键为模型名称，值为模型文件的路径
 models:

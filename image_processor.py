@@ -8,6 +8,7 @@ import glob
 from tqdm import tqdm
 import logging
 from PyQt5.QtCore import pyqtSignal, QObject, QThread
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -25,11 +26,82 @@ class BatchDetectWorker(QThread):
     log_message = pyqtSignal(str)      # 日志信号
     batch_finished = pyqtSignal(list)  # 完成信号
 
+
     def __init__(self, processor, input_dir, threshold):  # 新增：接收阈值
         super().__init__()
         self.processor = processor
         self.input_dir = input_dir
-        self.threshold = threshold  # 新增：接收阈值
+        self.threshold = threshold  # 接收阈值
+        self.device = processor.device
+        # self.batch_size = 8  # 设置分批大小
+        self.batch_size = self._estimate_batch_size() # 动态调整 batch_size
+
+    def _estimate_batch_size(self):
+        """动态估计适合的 batch_size,根据 GPU 可用内存"""
+        total_memory = torch.cuda.get_device_properties(self.device).total_memory / 1024**3  # GiB
+        reserved_memory = torch.cuda.memory_reserved(self.device) / 1024**3  # GiB
+        available_memory = total_memory - reserved_memory  # 可用内存
+
+        # 假设每张图片（3通道，288x288）占用约 3 * 288 * 288 * 4 / 1024 / 1024 ≈ 0.236 MiB
+        image_memory = 0.236  # 每张图片的内存占用（GiB，粗略估算）
+        # 预留一定内存以避免碎片，假设预留 0.5 GiB
+        safe_memory = available_memory - 0.5
+        max_batch_size = int(safe_memory / image_memory)
+
+        # 限制 batch_size 在 1 到 32 之间
+        batch_size = max(1, min(32, max_batch_size))
+        logger.info(f"动态调整 batch_size 为 {batch_size}，根据可用内存 {available_memory:.2f} GiB")
+        return batch_size
+    
+    def _preload_images(self, image_paths):
+        """多线程预加载图片，减少 I/O 等待"""
+        def load_image(path):
+            try:
+                img = Image.open(path).convert("RGB")
+                return transform(img), path
+            except Exception as e:
+                logger.error(f"预加载图片失败 {path}: {str(e)}")
+                return None, path
+
+        self.preloaded_images = []
+        self.preloaded_paths = []
+        threads = []
+        for path in image_paths:
+            thread = threading.Thread(target=lambda p, i=self.preloaded_images, ps=self.preloaded_paths: 
+                                     [i.append(t[0]), ps.append(p)] if (t := load_image(p))[0] is not None else None, 
+                                     args=(path,))
+            threads.append(thread)
+            thread.start()
+
+        for thread in threads:
+            thread.join()
+
+        # 过滤失败的图片
+        valid_indices = [i for i, img in enumerate(self.preloaded_images) if img is not None]
+        self.preloaded_images = [self.preloaded_images[i] for i in valid_indices]
+        self.preloaded_paths = [self.preloaded_paths[i] for i in valid_indices]
+        logger.info(f"成功预加载 {len(self.preloaded_images)} 张图片")
+
+    # def run(self): # 旧版本(单张逐一检测)
+    #     # 在线程中执行批量检测
+    #     image_paths = glob.glob(os.path.join(self.input_dir, "*.jpg")) + glob.glob(os.path.join(self.input_dir, "*.png"))
+    #     if not image_paths:
+    #         self.log_message.emit(f"在 {self.input_dir} 中未找到任何图片")
+    #         return
+
+    #     output_paths = []
+    #     detection_infos = []  # 新增：存储每张图片的检测信息
+    #     for i, input_image_path in enumerate(tqdm(image_paths, desc="批量检测图片")):
+    #         # output_path, info = self.processor.detect_single_image(input_image_path)  # 接收返回的提示信息
+    #         output_path, info = self.processor.detect_single_image(input_image_path, self.threshold)  # 修改：传递阈值
+    #         if output_path:
+    #             output_paths.append(output_path)
+    #             detection_infos.append(info)  # 新增：存储检测信息
+    #         self.progress_updated.emit(int((i + 1) / len(image_paths) * 100))
+
+    #     self.log_message.emit(f"批量检测结果已保存到 {self.processor.output_base_dir}")
+    #     # self.batch_finished.emit(output_paths)
+    #     self.batch_finished.emit([output_paths, detection_infos])  # 修改：传递路径和信息列表
 
     def run(self):
         # 在线程中执行批量检测
@@ -37,20 +109,60 @@ class BatchDetectWorker(QThread):
         if not image_paths:
             self.log_message.emit(f"在 {self.input_dir} 中未找到任何图片")
             return
+        # 预加载图片
+        self._preload_images(image_paths)
 
         output_paths = []
-        detection_infos = []  # 新增：存储每张图片的检测信息
-        for i, input_image_path in enumerate(tqdm(image_paths, desc="批量检测图片")):
-            # output_path, info = self.processor.detect_single_image(input_image_path)  # 接收返回的提示信息
-            output_path, info = self.processor.detect_single_image(input_image_path, self.threshold)  # 修改：传递阈值
-            if output_path:
-                output_paths.append(output_path)
-                detection_infos.append(info)  # 新增：存储检测信息
-            self.progress_updated.emit(int((i + 1) / len(image_paths) * 100))
+        detection_infos = []
+        total_images = len(self.preloaded_images)
+
+        # 分批处理预加载的图片
+        for start_idx in tqdm(range(0, total_images, self.batch_size), desc="批量检测图片"):
+            end_idx = min(start_idx + self.batch_size, total_images)
+            batch_tensors = torch.stack(self.preloaded_images[start_idx:end_idx]).to(self.device)
+
+            try:
+                # 批量推理
+                with torch.no_grad():
+                    scores_list, masks_list, _ = self.processor.model.predict(batch_tensors)
+                
+                # 逐一后处理每张图片
+                for i, (scores, mask) in enumerate(zip(scores_list, masks_list)):
+                    image_path = self.preloaded_paths[start_idx + i]
+                    # 提取单个图片的得分（假设 scores 是列表或张量中的单个值）
+                    score = float(scores[0]) if isinstance(scores, list) and len(scores) > 0 else scores.item() if torch.is_tensor(scores) else float(scores)
+                    
+                    # 生成检测信息
+                    detection_info = f"异常得分: {score:.2f} - {'检测到异常' if score > self.threshold else '图像正常'}"
+
+                    # 从预加载的图片生成热力图和输出
+                    image = Image.open(image_path).convert("RGB")  # 重新加载原始图片以保持一致性
+                    anomaly_map = mask.squeeze()
+                    anomaly_map = (anomaly_map - anomaly_map.min()) / (anomaly_map.max() - anomaly_map.min() + 1e-8)
+                    original_image = np.array(image.resize((288, 288)))
+                    heatmap = plt.cm.jet(anomaly_map)[:, :, :3]
+                    heatmap = (original_image * 0.5 + heatmap * 255 * 0.5).astype(np.uint8)
+                    combined_image = np.hstack((original_image, heatmap))
+                    
+                    input_filename = os.path.splitext(os.path.basename(image_path))[0]
+                    output_path = os.path.join(self.processor.output_base_dir, f"detection_{input_filename}.png")
+                    plt.imsave(output_path, combined_image)
+                    
+                    output_paths.append(output_path)
+                    detection_infos.append(detection_info)
+                    progress = int((start_idx + i + 1) / total_images * 100)
+                    self.progress_updated.emit(progress)
+
+                # 清理 GPU 缓存
+                torch.cuda.empty_cache()
+
+            except Exception as e:
+                self.log_message.emit(f"分批检测过程中发生错误（批次 {start_idx}-{end_idx}）: {str(e)}")
+                raise
 
         self.log_message.emit(f"批量检测结果已保存到 {self.processor.output_base_dir}")
-        # self.batch_finished.emit(output_paths)
-        self.batch_finished.emit([output_paths, detection_infos])  # 修改：传递路径和信息列表
+        self.batch_finished.emit([output_paths, detection_infos])
+
 
 class ImageProcessor(QObject):
     # 图像处理器类，用于处理图像检测任务
@@ -163,23 +275,3 @@ class ImageProcessor(QObject):
         self.batch_worker.batch_finished.connect(self.batch_finished.emit)
         self.batch_worker.start()
         return None  # 返回 None，因为结果通过信号异步传递
-        # try:
-        #     # 获取目录下所有图片路径
-        #     image_paths = glob.glob(os.path.join(input_dir, "*.jpg")) + glob.glob(os.path.join(input_dir, "*.png"))
-        #     if not image_paths:
-        #         self.log_message.emit(f"在 {input_dir} 中未找到任何图片")
-        #         return None
-            
-        #     output_paths = []
-        #     for i, input_image_path in enumerate(tqdm(image_paths, desc="批量检测图片")):
-        #         output_path = self.detect_single_image(input_image_path)
-        #         if output_path:
-        #             output_paths.append(output_path)
-        #         self.progress_updated.emit(int((i + 1) / len(image_paths) * 100))
-
-        #     self.log_message.emit(f"批量检测结果已保存到 {self.output_base_dir}")
-        #     self.batch_finished.emit(output_paths)
-        #     return self.output_base_dir
-        # except Exception as e:
-        #     self.log_message.emit(f"批量检测过程中发生错误: {str(e)}")
-        #     raise
