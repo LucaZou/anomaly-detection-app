@@ -1,8 +1,9 @@
 from PyQt5.QtWidgets import (
     QMainWindow, QLabel, QVBoxLayout, QHBoxLayout, QWidget, QMessageBox, QFormLayout, QDialog,
-    QDoubleSpinBox,QTextEdit, QProgressBar, QFileDialog, QAction, QToolBar, QMenu, QPushButton)
-from PyQt5.QtGui import QPixmap
-from PyQt5.QtCore import Qt, pyqtSignal
+    QDoubleSpinBox,QTextEdit, QProgressBar, QFileDialog, QAction, QToolBar, QMenu, QPushButton,
+    QListWidget, QListWidgetItem, QSizePolicy, QSpacerItem, QScrollArea)
+from PyQt5.QtGui import QPixmap, QIcon
+from PyQt5.QtCore import Qt, pyqtSignal, QSize
 import os
 
 # 定义设置窗口类
@@ -47,13 +48,16 @@ class MainWindow(QMainWindow):
         self.current_model_name = "未选择模型" # 当前模型名称
         self.detection_infos = []  # 存储检测信息
         self.threshold = 1.2  # 新增：默认阈值，初始为 0.5
+        # 缩略图分页相关属性
+        # self.thumbnails_per_page = 5  # 每页显示 5 个缩略图
+        # self.current_page = 0  # 当前页码
         self.init_ui() # 初始化界面
         self.connect_signals() # 连接信号和槽
 
     def init_ui(self):
         # 初始化界面
         self.setWindowTitle("Anomaly Detection App")
-        self.setGeometry(100, 100, 800, 600)
+        self.setGeometry(100, 100, 600, 700) # 设置窗口大小
 
         # 工具栏
         toolbar = QToolBar("Tools")
@@ -87,7 +91,6 @@ class MainWindow(QMainWindow):
         # 状态信息
         self.model_label = QLabel(f"当前模型: {self.current_model_name}")
         self.image_label_info = QLabel("当前图片: 未加载")
-        # 新增：检测信息标签
         self.detection_info_label = QLabel("检测信息: 未检测")
         layout.addWidget(self.model_label)
         layout.addWidget(self.image_label_info)
@@ -111,6 +114,29 @@ class MainWindow(QMainWindow):
         button_layout.addWidget(self.next_button)
         layout.addLayout(button_layout)
 
+        # 修改：使用 QScrollArea 包裹缩略图列表，确保可见
+        self.thumbnail_scroll = QScrollArea()
+        thumbnail_widget = QWidget()
+        thumbnail_layout = QVBoxLayout(thumbnail_widget)
+
+        self.thumbnail_list = QListWidget()
+        self.thumbnail_list.setFlow(QListWidget.LeftToRight)
+        self.thumbnail_list.setIconSize(QSize(100, 100))
+        self.thumbnail_list.setMinimumHeight(120)  # 最小高度
+        self.thumbnail_list.setMaximumWidth(600)  # 最大宽度，避免过长
+        self.thumbnail_list.itemClicked.connect(self.select_thumbnail)
+        thumbnail_layout.addWidget(self.thumbnail_list)
+
+        thumbnail_widget.setLayout(thumbnail_layout)
+        self.thumbnail_scroll.setWidget(thumbnail_widget)
+        self.thumbnail_scroll.setWidgetResizable(True)  # 允许滚动
+        self.thumbnail_scroll.setMinimumHeight(150)  # 确保可见
+        self.thumbnail_scroll.setVisible(False)  # 初始隐藏
+        layout.addWidget(self.thumbnail_scroll)
+
+        # 修改：添加间隔，确保缩略图区域不被压缩
+        layout.addSpacerItem(QSpacerItem(20, 40, QSizePolicy.Minimum, QSizePolicy.Expanding))
+
         # 进度条
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False) # 默认隐藏
@@ -120,6 +146,9 @@ class MainWindow(QMainWindow):
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True) # 只读
         layout.addWidget(self.log_text)
+
+        # 初始化时更新缩略图,初始化时不显示缩略图
+        self.update_thumbnails()
 
     def connect_signals(self):
         # 连接信号和槽
@@ -148,25 +177,25 @@ class MainWindow(QMainWindow):
         # 检测单张图片
         file_path, _ = QFileDialog.getOpenFileName(self, "选择图片", "", "Images (*.png *.jpg)")
         if file_path:
-            # output_path, detection_info = self.processor.detect_single_image(file_path)  # 接收检测信息
             output_path, detection_info = self.processor.detect_single_image(file_path, self.threshold) # 接收检测信息，传递阈值
             if output_path:
                 self.show_result(output_path)
                 self.result_paths = [output_path]
-                self.detection_infos = [detection_info]  # 新增：存储检测信息
+                self.detection_infos = [detection_info]  # 存储检测信息
                 self.current_index = 0
                 self.update_buttons(single_mode=False)
                 self.image_label_info.setText(f"当前图片: {os.path.basename(output_path)}")
                 self.detection_info_label.setText(f"检测信息: {detection_info}")  # 新增：更新检测信息
+                # 修改：单张检测时隐藏缩略图
+                self.thumbnail_scroll.setVisible(False)
+                self.update_thumbnails()  # 更新缩略图
 
     def detect_batch(self):
         # 批量检测文件夹中的图片
         folder_path = QFileDialog.getExistingDirectory(self, "选择文件夹")
         if folder_path:
             self.progress_bar.setVisible(True)
-            # self.processor.detect_batch_images(folder_path)
-            self.processor.detect_batch_images(folder_path, self.threshold)  # 修改：传递阈值
-            # self.progress_bar.setVisible(False)
+            self.processor.detect_batch_images(folder_path, self.threshold)  # 传递阈值
 
     def show_result(self, output_path):
         # 显示检测结果
@@ -174,7 +203,7 @@ class MainWindow(QMainWindow):
         self.image_label.setPixmap(pixmap.scaled(self.image_label.size(), Qt.KeepAspectRatio))
 
     def show_batch_results(self, results):
-        # 修改：接收路径和检测信息
+        # 接收路径和检测信息
         output_paths, detection_infos = results
         self.result_paths = output_paths
         self.detection_infos = detection_infos
@@ -184,6 +213,9 @@ class MainWindow(QMainWindow):
             self.update_buttons(single_mode=False)
             self.image_label_info.setText(f"当前图片: {os.path.basename(self.result_paths[self.current_index])}")
             self.detection_info_label.setText(f"检测信息: {self.detection_infos[self.current_index]}")  # 新增：显示检测信息
+            # 修改：批量检测时显示缩略图
+            self.thumbnail_scroll.setVisible(True)
+            self.update_thumbnails()  # 更新缩略图
         self.progress_bar.setVisible(False)
 
     def prev_image(self):
@@ -195,6 +227,7 @@ class MainWindow(QMainWindow):
             # 修改：同步更新检测信息
             self.detection_info_label.setText(f"检测信息: {self.detection_infos[self.current_index]}")
             self.update_buttons(single_mode=False)
+            self.sync_thumbnail_selection()  # 同步缩略图选中状态
 
     def next_image(self):
         # 显示下一张图片
@@ -205,12 +238,13 @@ class MainWindow(QMainWindow):
             # 修改：同步更新检测信息
             self.detection_info_label.setText(f"检测信息: {self.detection_infos[self.current_index]}")
             self.update_buttons(single_mode=False)
+            self.sync_thumbnail_selection()  # 同步缩略图选中状态
 
     def update_buttons(self, single_mode=False):
         # 更新切换按钮状态
         if single_mode:
             self.prev_button.setEnabled(False)
-            self.next_button.setEnabled(False)
+            self.next_button.setEnabled(self.current_index < len(self.result_paths) - 1)
         else:
             self.prev_button.setEnabled(self.current_index > 0)
             self.next_button.setEnabled(self.current_index < len(self.result_paths) - 1)
@@ -239,3 +273,40 @@ class MainWindow(QMainWindow):
                 score = float(self.detection_infos[i].split("异常得分: ")[1].split(" - ")[0])
                 self.detection_infos[i] = f"异常得分: {score:.2f} - {'检测到异常' if score > self.threshold else '图像正常'}"
             self.detection_info_label.setText(f"检测信息: {self.detection_infos[self.current_index]}")
+            self.update_thumbnails()  # 更新缩略图显示
+
+    # 新增：更新缩略图列表
+    def update_thumbnails(self):
+        self.thumbnail_list.clear()
+        if not self.result_paths:
+            return
+
+        self.log_text.append(f"更新缩略图: 显示所有 {len(self.result_paths)} 张图片")
+        for i in range(len(self.result_paths)):
+            try:
+                pixmap = QPixmap(self.result_paths[i]).scaled(100, 100, Qt.KeepAspectRatio)
+                item = QListWidgetItem(QIcon(pixmap),"")
+                item.setData(Qt.UserRole, i)
+                self.thumbnail_list.addItem(item)
+            except Exception as e:
+                self.log_text.append(f"加载缩略图失败 {self.result_paths[i]}: {str(e)}")
+        
+        # 选中当前图片
+        self.sync_thumbnail_selection()
+
+    # 同步缩略图选中状态
+    def sync_thumbnail_selection(self):
+        for i in range(self.thumbnail_list.count()):
+            item = self.thumbnail_list.item(i)
+            idx = item.data(Qt.UserRole)
+            if idx == self.current_index:
+                self.thumbnail_list.setCurrentItem(item)
+                break
+
+    # 选择缩略图跳转
+    def select_thumbnail(self, item):
+        self.current_index = item.data(Qt.UserRole)
+        self.show_result(self.result_paths[self.current_index])
+        self.image_label_info.setText(f"当前图片: {os.path.basename(self.result_paths[self.current_index])}")
+        self.detection_info_label.setText(f"检测信息: {self.detection_infos[self.current_index]}")
+        self.update_buttons(single_mode=False)

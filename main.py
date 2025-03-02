@@ -7,6 +7,7 @@ from PyQt5.QtWidgets import QApplication
 from gui import MainWindow
 from model_loader import load_model
 from image_processor import ImageProcessor
+import yaml
 
 # 配置日志
 log_dir = "./logs"
@@ -23,8 +24,12 @@ logger = logging.getLogger(__name__) # 获取日志记录器
 
 def load_config():
     # 加载配置文件
-    with open("config.json", "r", encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open("config.yaml", "r", encoding="utf-8") as f:
+            return yaml.safe_load(f)  # 使用 yaml.safe_load 解析 YAML 文件
+    except Exception as e:
+        logger.error(f"加载配置文件失败: {str(e)}")
+        raise
 
 def preload_models(device, config):
     # 预加载模型
