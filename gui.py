@@ -158,21 +158,6 @@ class MainWindow(QMainWindow):
         self.processor.progress_updated.connect(self.update_progress)
         self.processor.batch_finished.connect(self.show_batch_results)
 
-    # def select_model(self, model_name):
-    #     # 选择模型
-    #     model_path = self.models.get(model_name)
-    #     if model_path:
-    #         try:
-    #             self.processor.set_model(model_name, model_path) # 设置当前模型
-    #             self.current_model_name = model_name
-    #             self.model_label.setText(f"当前模型: {self.current_model_name}")
-    #             self.log_text.append(f"模型已切换为: {model_name} ({model_path})")
-    #         except Exception as e:
-    #             error_msg = f"加载模型失败: {str(e)}"
-    #             self.log_text.append(error_msg)
-    #             # 新增：显示错误提示框
-    #             QMessageBox.critical(self, "错误", error_msg)
-
     def select_model(self, model_name):
         """选择模型并显示加载进度"""
         model_path = self.models.get(model_name)
@@ -295,6 +280,10 @@ class MainWindow(QMainWindow):
     def update_log(self, message):
         # 更新日志信息
         self.log_text.append(message)
+        # 新增：检测 ERROR 前缀并显示弹窗
+        if message.startswith("ERROR:"):
+            error_msg = message[len("ERROR:"):].strip()
+            QMessageBox.critical(self, "错误", error_msg)
 
     def update_progress(self, value):
         # 更新进度条

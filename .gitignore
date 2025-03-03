@@ -5,6 +5,7 @@ models/*
 __pycache__/
 /tmp/
 /.pytest_cache/
+tests/
 # 虚拟环境目录（如venv、.venv等）
 venv/
 .venv/

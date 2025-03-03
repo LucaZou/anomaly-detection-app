@@ -128,7 +128,7 @@ class BatchDetectWorker(QThread):
         # 在线程中执行批量检测
         image_paths = glob.glob(os.path.join(self.input_dir, "*.jpg")) + glob.glob(os.path.join(self.input_dir, "*.png"))
         if not image_paths:
-            self.log_message.emit(f"在 {self.input_dir} 中未找到任何图片")
+            self.log_message.emit(f"ERROR:在 {self.input_dir} 中未找到任何图片")
             return
         # 预加载图片
         self._preload_images(image_paths)
@@ -136,49 +136,70 @@ class BatchDetectWorker(QThread):
         detection_infos = []
         total_images = len(self.preloaded_images)
 
+        with ThreadPoolExecutor(max_workers=12) as executor:  # 新增：并行处理热力图生成
+            for start_idx in tqdm(range(0, total_images, self.batch_size), desc="批量检测图片"):
+                end_idx = min(start_idx + self.batch_size, total_images)
+                batch_tensors = torch.stack(self.preloaded_images[start_idx:end_idx]).to(self.device)
+                try:
+                    with torch.no_grad():
+                        scores_list, masks_list, _ = self.processor.model.predict(batch_tensors)
+                    
+                    futures = []
+                    for i, (scores, mask) in enumerate(zip(scores_list, masks_list)):
+                        image_path = self.preloaded_paths[start_idx + i]
+                        score = float(scores[0]) if isinstance(scores, list) else scores.item()
+                        detection_info = f"异常得分: {score:.2f} - {'检测到异常' if score > self.threshold else '图像正常'}"
+                        image = Image.open(image_path).convert("RGB")
+                        futures.append(executor.submit(self.processor._generate_heatmap, image, mask, image_path))
+                        detection_infos.append(detection_info)
+                    
+                    # 收集并行结果
+                    for i, future in enumerate(as_completed(futures)):
+                        output_path = future.result()
+                        if output_path:
+                            output_paths.append(output_path)
+                        progress = int((start_idx + i + 1) / total_images * 100)
+                        self.progress_updated.emit(progress)
+                    
+                    torch.cuda.empty_cache()
+                except Exception as e:
+                    error_msg = f"ERROR: 批量检测错误: {str(e)}"
+                    self.log_message.emit(error_msg)
+                    break
+
         # 分批处理预加载的图片
-        for start_idx in tqdm(range(0, total_images, self.batch_size), desc="批量检测图片"):
-            end_idx = min(start_idx + self.batch_size, total_images)
-            batch_tensors = torch.stack(self.preloaded_images[start_idx:end_idx]).to(self.device)
+        # for start_idx in tqdm(range(0, total_images, self.batch_size), desc="批量检测图片"):
+        #     end_idx = min(start_idx + self.batch_size, total_images)
+        #     batch_tensors = torch.stack(self.preloaded_images[start_idx:end_idx]).to(self.device)
 
-            try:
-                # 批量推理
-                with torch.no_grad():
-                    scores_list, masks_list, _ = self.processor.model.predict(batch_tensors)
-                
-                # 逐一后处理每张图片
-                for i, (scores, mask) in enumerate(zip(scores_list, masks_list)):
-                    image_path = self.preloaded_paths[start_idx + i]
-                    # 提取单个图片的得分（假设 scores 是列表或张量中的单个值）
-                    score = float(scores[0]) if isinstance(scores, list) and len(scores) > 0 else scores.item() if torch.is_tensor(scores) else float(scores)
-                    
-                    # 生成检测信息
-                    detection_info = f"异常得分: {score:.2f} - {'检测到异常' if score > self.threshold else '图像正常'}"
+        #     try:
+        #         # 批量推理
+        #         with torch.no_grad():
+        #             scores_list, masks_list, _ = self.processor.model.predict(batch_tensors)
+        #         for i, (scores, mask) in enumerate(zip(scores_list, masks_list)): # 逐一后处理每张图片
+        #             image_path = self.preloaded_paths[start_idx + i]
+        #             # 提取单个图片的得分（假设 scores 是列表或张量中的单个值）
+        #             score = float(scores[0]) if isinstance(scores, list) and len(scores) > 0 else scores.item() if torch.is_tensor(scores) else float(scores)
+        #             detection_info = f"异常得分: {score:.2f} - {'检测到异常' if score > self.threshold else '图像正常'}" # 生成检测信息
+        #             # 从预加载的图片生成热力图和输出
+        #             image = Image.open(image_path).convert("RGB")  # 重新加载原始图片以保持一致性
+        #             output_path = self.processor._generate_heatmap(image, mask, image_path)  # 修改：调用公共方法
+        #             output_paths.append(output_path)
+        #             detection_infos.append(detection_info)
+        #             progress = int((start_idx + i + 1) / total_images * 100)
+        #             self.progress_updated.emit(progress)
+        #         # 清理 GPU 缓存
+        #         torch.cuda.empty_cache()
 
-                    # 从预加载的图片生成热力图和输出
-                    image = Image.open(image_path).convert("RGB")  # 重新加载原始图片以保持一致性
-                    anomaly_map = mask.squeeze()
-                    anomaly_map = (anomaly_map - anomaly_map.min()) / (anomaly_map.max() - anomaly_map.min() + 1e-8)
-                    original_image = np.array(image.resize((288, 288)))
-                    heatmap = plt.cm.jet(anomaly_map)[:, :, :3]
-                    heatmap = (original_image * 0.5 + heatmap * 255 * 0.5).astype(np.uint8)
-                    combined_image = np.hstack((original_image, heatmap))
-                    
-                    input_filename = os.path.splitext(os.path.basename(image_path))[0]
-                    output_path = os.path.join(self.processor.output_base_dir, f"detection_{input_filename}.png")
-                    plt.imsave(output_path, combined_image)
-                    
-                    output_paths.append(output_path)
-                    detection_infos.append(detection_info)
-                    progress = int((start_idx + i + 1) / total_images * 100)
-                    self.progress_updated.emit(progress)
-
-                # 清理 GPU 缓存
-                torch.cuda.empty_cache()
-
-            except Exception as e:
-                self.log_message.emit(f"分批检测过程中发生错误（批次 {start_idx}-{end_idx}）: {str(e)}")
-                raise
+        #     except RuntimeError as e:
+        #         if "out of memory" in str(e):
+        #             self.batch_size = max(1, self.batch_size // 2)  # 动态减小 batch_size
+        #             self.log_message.emit(f"GPU 内存不足，调整 batch_size 为 {self.batch_size}")
+        #             continue
+        #         else:
+        #             self.log_message.emit(f"批量检测错误: {str(e)}")
+        #             self.log_message.emit(f"分批检测过程中发生错误（批次 {start_idx}-{end_idx}): {str(e)}")
+        #             raise
 
         self.log_message.emit(f"批量检测结果已保存到 {self.processor.output_base_dir}")
         self.batch_finished.emit([output_paths, detection_infos])
@@ -218,66 +239,49 @@ class ImageProcessor(QObject):
             self.model_cache[model_name] = self.model
             self.model_path = model_path
         else: # 模型未找到且无路径提供
-            self.log_message.emit(f"模型 {model_name} 未找到且无路径提供！")
+            self.log_message.emit(f"ERROR:模型 {model_name} 未找到且无路径提供！")
             return
         self.current_model_name = model_name
         self.update_output_dir()
         return None
+    
+    def _generate_heatmap(self, image, anomaly_map, input_image_path):
+        """生成并保存热力图（新增公共方法）"""
+        try:
+            anomaly_map = anomaly_map.squeeze()
+            anomaly_map = (anomaly_map - anomaly_map.min()) / (anomaly_map.max() - anomaly_map.min() + 1e-8)
+            original_image = np.array(image.resize((288, 288)))
+            heatmap = plt.cm.jet(anomaly_map)[:, :, :3]
+            heatmap = (original_image * 0.5 + heatmap * 255 * 0.5).astype(np.uint8)
+            combined_image = np.hstack((original_image, heatmap))
+            input_filename = os.path.splitext(os.path.basename(input_image_path))[0]
+            output_path = os.path.join(self.output_base_dir, f"detection_{input_filename}.png")
+            plt.imsave(output_path, combined_image)
+            return output_path
+        except Exception as e:
+            error_msg = f"ERROR: 生成热力图失败: {str(e)}"  # 修改：添加 ERROR 前缀
+            self.log_message.emit(error_msg)
+            return None
 
     def detect_single_image(self, input_image_path, threshold):
         # 检测单张图片
         if not hasattr(self, 'model') or self.model is None:
-            self.log_message.emit("请先选择模型！")
-            return None
+            self.log_message.emit("ERROR:请先选择模型！")
+            return None, "ERROR:请先选择模型！"  # 修改：返回错误信息
         try:
             image = Image.open(input_image_path).convert("RGB") # 读取图片并转为 RGB 模式
             image_tensor = transform(image).unsqueeze(0).to(self.device) # 图像预处理并移动到设备
-
             with torch.no_grad():
                 scores, masks, _ = self.model.predict(image_tensor) # 模型推理
-                # 日志输出scores
-                # self.log_message.emit(f"检测结果: {scores[0].item()}") # 输出第一个元素的值
                 anomaly_map = masks[0] # 获取异常图
-
-            # scores 是单值列表，直接取第一个元素
-            score = float(scores[0]) if not torch.is_tensor(scores[0]) else scores[0].item()
-
-            # 处理 scores 列表的情况(处理多种类型的模型)
-            # if isinstance(scores, list):  # 检查 scores 是否为列表
-            #     if len(scores) == 1:  # 如果列表只有一项，取第一个值
-            #         score = float(scores[0]) if not torch.is_tensor(scores[0]) else scores[0].item()
-            #     else:  # 如果列表有多项，取最大值（假设最大值代表最可能的异常）
-            #         score = max([float(s) if not torch.is_tensor(s) else s.item() for s in scores])
-            # elif torch.is_tensor(scores):  # 如果是张量，取标量值
-            #     score = scores.item()
-            # else:  # 其他情况，直接尝试转换为浮点数
-            #     score = float(scores)
-            
-            # 生成检测信息
-            detection_info = f"异常得分: {score:.2f} - "
-            if score > threshold:
-                detection_info += "检测到异常"
-            else:
-                detection_info += "图像正常"
-            
-            # 归一化异常图
-            anomaly_map = anomaly_map.squeeze()
-            anomaly_map = (anomaly_map - anomaly_map.min()) / (anomaly_map.max() - anomaly_map.min() + 1e-8)
-
-            # 生成热力图
-            original_image = np.array(image.resize((288, 288)))
-            heatmap = plt.cm.jet(anomaly_map)[:, :, :3] # 使用 jet 颜色映射
-            heatmap = (original_image * 0.5 + heatmap * 255 * 0.5).astype(np.uint8) # 叠加到原图上
-            combined_image = np.hstack((original_image, heatmap)) # 水平拼接
-
-            # 保存结果图像
-            input_filename = os.path.splitext(os.path.basename(input_image_path))[0]
-            output_path = os.path.join(self.output_base_dir, f"detection_{input_filename}.png")
-            plt.imsave(output_path, combined_image)
-            self.log_message.emit(f"检测结果已保存到 {output_path}")
-            return output_path, detection_info  # 修改：返回输出路径和提示信息
+            score = float(scores[0]) if not torch.is_tensor(scores[0]) else scores[0].item() # scores 是单值列表，直接取第一个元素
+            detection_info = f"异常得分: {score:.2f} - {'检测到异常' if score > threshold else '图像正常'}" # 生成检测信息
+            output_path = self._generate_heatmap(image, anomaly_map, input_image_path)  # 修改：调用公共方法
+            if output_path:
+                self.log_message.emit(f"检测结果已保存到 {output_path}")
+            return output_path, detection_info
         except Exception as e:
-            error_msg = f"检测单张图片时发生错误: {str(e)}"
+            error_msg = f"ERROR: 检测单张图片时发生错误: {str(e)}"  # 修改：添加 ERROR 前缀
             self.log_message.emit(error_msg)
             return None, error_msg
             
@@ -285,7 +289,7 @@ class ImageProcessor(QObject):
     def detect_batch_images(self, input_dir, threshold):  # 新增：接收阈值
         # 批量检测图片
         if not hasattr(self, 'model') or self.model is None:
-            self.log_message.emit("请先选择模型！")
+            self.log_message.emit("ERROR:请先选择模型！")
             return None
         # 创建并启动工作线程
         self.batch_worker = BatchDetectWorker(self, input_dir, threshold)  # 修改：传递阈值
