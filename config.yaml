@@ -1,9 +1,23 @@
 # Anomaly Detection App 的配置文件
 # 定义模型加载模式，可选值：preload（预加载所有模型）或 ondemand（按需加载）
-load_mode: preload
+load_mode: ondemand
 # 模型配置, key 为模型名称，value 为模型路径
 models:
   Metal Nut: models/mvtec_metal_nut/ckpt.pth
-  Screw: models/mvtec_screw/ckpt.pth
+  # Screw: models/mvtec_screw/ckpt.pth
+  # Bottle: models/mvtec_bottle/ckpt.pth
+  # Grid: models/mvtec_grid/ckpt.pth
+  # Capsule: models/mvtec_capsule/ckpt.pth
+  # Toothbrush: models/mvtec_toothbrush/ckpt.pth
+  # Cable: models/mvtec_cable/ckpt.pth
+  # Leather: models/mvtec_leather/ckpt.pth
+  # Zipper: models/mvtec_zipper/ckpt.pth
+  # Transistor: models/mvtec_transistor/ckpt.pth
+  # Wood: models/mvtec_wood/ckpt.pth
+  # Tile: models/mvtec_tile/ckpt.pth
+  # Hazelnut: models/mvtec_hazelnut/ckpt.pth
+  # Carpet: models/mvtec_carpet/ckpt.pth
+  # Pill: models/mvtec_pill/ckpt.pth
+
 # 异常判断阈值
 threshold: 1.20

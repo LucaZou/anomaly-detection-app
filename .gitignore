@@ -1,7 +1,16 @@
-/data/
-/logs/
-/output/
-/models/
-/__pycache__/
+data/*
+logs/*
+output/*
+models/*
+__pycache__/
 /tmp/
-*.yaml
+/.pytest_cache/
+# 虚拟环境目录（如venv、.venv等）
+venv/
+.venv/
+.env/
+# IDE配置文件（如PyCharm、VSCode）
+.idea/
+.vscode/
+*.swp
+*.swo

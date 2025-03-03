@@ -9,6 +9,7 @@ from tqdm import tqdm
 import logging
 from PyQt5.QtCore import pyqtSignal, QObject, QThread
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
 
@@ -53,8 +54,7 @@ class BatchDetectWorker(QThread):
         logger.info(f"动态调整 batch_size 为 {batch_size}，根据可用内存 {available_memory:.2f} GiB")
         return batch_size
     
-    def _preload_images(self, image_paths):
-        """多线程预加载图片，减少 I/O 等待"""
+    def _preload_images(self, image_paths): # 多线程预加载图片，减少 I/O 等待
         def load_image(path):
             try:
                 img = Image.open(path).convert("RGB")
@@ -65,22 +65,43 @@ class BatchDetectWorker(QThread):
 
         self.preloaded_images = []
         self.preloaded_paths = []
-        threads = []
-        for path in image_paths:
-            thread = threading.Thread(target=lambda p, i=self.preloaded_images, ps=self.preloaded_paths: 
-                                     [i.append(t[0]), ps.append(p)] if (t := load_image(p))[0] is not None else None, 
-                                     args=(path,))
-            threads.append(thread)
-            thread.start()
-
-        for thread in threads:
-            thread.join()
-
-        # 过滤失败的图片
-        valid_indices = [i for i, img in enumerate(self.preloaded_images) if img is not None]
-        self.preloaded_images = [self.preloaded_images[i] for i in valid_indices]
-        self.preloaded_paths = [self.preloaded_paths[i] for i in valid_indices]
+        with ThreadPoolExecutor(max_workers=8) as executor:  # 固定线程数，优化 I/O
+            future_to_path = {executor.submit(load_image, path): path for path in image_paths}
+            for future in as_completed(future_to_path):
+                img, path = future.result()
+                if img is not None:
+                    self.preloaded_images.append(img)
+                    self.preloaded_paths.append(path)
         logger.info(f"成功预加载 {len(self.preloaded_images)} 张图片")
+    
+    # def _preload_images(self, image_paths):
+    #     """多线程预加载图片，减少 I/O 等待"""
+    #     def load_image(path):
+    #         try:
+    #             img = Image.open(path).convert("RGB")
+    #             return transform(img), path
+    #         except Exception as e:
+    #             logger.error(f"预加载图片失败 {path}: {str(e)}")
+    #             return None, path
+
+    #     self.preloaded_images = []
+    #     self.preloaded_paths = []
+    #     threads = []
+    #     for path in image_paths:
+    #         thread = threading.Thread(target=lambda p, i=self.preloaded_images, ps=self.preloaded_paths: 
+    #                                  [i.append(t[0]), ps.append(p)] if (t := load_image(p))[0] is not None else None, 
+    #                                  args=(path,))
+    #         threads.append(thread)
+    #         thread.start()
+
+    #     for thread in threads:
+    #         thread.join()
+
+    #     # 过滤失败的图片
+    #     valid_indices = [i for i, img in enumerate(self.preloaded_images) if img is not None]
+    #     self.preloaded_images = [self.preloaded_images[i] for i in valid_indices]
+    #     self.preloaded_paths = [self.preloaded_paths[i] for i in valid_indices]
+    #     logger.info(f"成功预加载 {len(self.preloaded_images)} 张图片")
 
     # def run(self): # 旧版本(单张逐一检测)
     #     # 在线程中执行批量检测
@@ -111,7 +132,6 @@ class BatchDetectWorker(QThread):
             return
         # 预加载图片
         self._preload_images(image_paths)
-
         output_paths = []
         detection_infos = []
         total_images = len(self.preloaded_images)
