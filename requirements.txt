@@ -1,0 +1,14 @@
+PyYAML~=6.0.2
+PyQt5~=5.15.11
+torch~=1.13.0+cu117
+numpy~=1.22.4
+tqdm~=4.67.1
+torchvision~=0.14.0+cu117
+matplotlib~=3.5.0
+pillow~=11.0.0
+scipy~=1.13.1
+opencv-python~=4.5.1.48
+pandas~=1.5.0
+scikit-learn~=1.6.0
+scikit-image~=0.24.0
+timm~=1.0.12

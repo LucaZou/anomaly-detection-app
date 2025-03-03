@@ -8,7 +8,6 @@ import glob
 from tqdm import tqdm
 import logging
 from PyQt5.QtCore import pyqtSignal, QObject, QThread
-import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)

@@ -1,6 +1,5 @@
 import os
 import sys
-import json
 import torch
 import logging
 from PyQt5.QtWidgets import QApplication
@@ -8,9 +7,8 @@ from gui import MainWindow
 from model_loader import load_model
 from image_processor import ImageProcessor
 import yaml
-from progress_dialog import ProgressDialog, ProgressWorker  # 新增：导入进度对话框
+from progress_dialog import ProgressDialog  # 新增：导入进度对话框
 from concurrent.futures import ThreadPoolExecutor, as_completed  # 新增：导入线程池
-import threading
 
 # 配置日志
 log_dir = "./logs"
