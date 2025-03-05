@@ -2,52 +2,89 @@ import os
 import sys
 import torch
 import logging
+import logging.handlers
 from PyQt5.QtWidgets import QApplication
 from gui import MainWindow
 from model_loader import load_model
 from image_processor import ImageProcessor
 import yaml
-from progress_dialog import ProgressDialog  # 新增：导入进度对话框
-from concurrent.futures import ThreadPoolExecutor, as_completed  # 新增：导入线程池
+from progress_dialog import ProgressDialog
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # 配置日志
 log_dir = "./logs"
-os.makedirs(log_dir, exist_ok=True) # 创建日志目录
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(os.path.join(log_dir, "detection_log.txt"), mode="a", encoding="utf-8"),
-        logging.StreamHandler() # 控制台输出
-    ]
-)
-logger = logging.getLogger(__name__) # 获取日志记录器
+os.makedirs(log_dir, exist_ok=True)
+
+def setup_logging():
+    # 主日志器
+    logger = logging.getLogger('AnomalyDetection')
+    logger.setLevel(logging.DEBUG)  # 修改：降低日志级别为DEBUG，捕获更多信息
+
+    # 清空已有处理器，避免重复添加
+    if logger.handlers:
+        logger.handlers.clear()
+
+    # 控制台处理器
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.DEBUG)  # 修改：确保控制台输出所有日志
+
+    # 文件处理器（按大小轮转）
+    file_handler = logging.handlers.RotatingFileHandler(
+        os.path.join(log_dir, "detection_log.txt"),
+        maxBytes=5 * 1024 * 1024,  # 5MB
+        backupCount=10,
+        encoding="utf-8"
+    )
+    file_handler.setLevel(logging.DEBUG)  # 修改：确保文件记录所有日志
+
+    # 日志格式
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    console_handler.setFormatter(formatter)
+    file_handler.setFormatter(formatter)
+
+    # 添加处理器
+    logger.addHandler(console_handler)
+    logger.addHandler(file_handler)
+
+    # 为子模块设置日志器并绑定处理器
+    for module in ['ModelLoader', 'ImageProcessor', 'GUI']:
+        sub_logger = logging.getLogger(module)
+        sub_logger.setLevel(logging.DEBUG)
+        if not sub_logger.handlers:  # 避免重复添加处理器
+            sub_logger.addHandler(console_handler)
+            sub_logger.addHandler(file_handler)
+
+    return logger
+
+logger = setup_logging()
 
 def load_config():
-    # 加载配置文件
+    logger.debug("开始加载配置文件 config.yaml")  # 新增：调试日志
     try:
         with open("config.yaml", "r", encoding="utf-8") as f:
-            return yaml.safe_load(f)  # 使用 yaml.safe_load 解析 YAML 文件
+            config = yaml.safe_load(f)
+        logger.info("配置文件加载成功")
+        return config
     except Exception as e:
-        logger.error(f"加载配置文件失败: {str(e)}")
+        logger.error(f"加载配置文件失败: {str(e)}", exc_info=True)
         raise
 
 def preload_models(device, config, progress_dialog=None):
-    """预加载所有模型，支持进度更新"""
+    logger.debug("开始预加载模型")  # 新增：调试日志
     models = {}
     model_configs = config["models"]
     total_tasks = len(model_configs)
+    model_logger = logging.getLogger('ModelLoader')
 
     def load_single_model(name, path):
         try:
             model = load_model(path, device)
-            logger.info(f"预加载模型: {name} ({path})")
+            model_logger.info(f"预加载模型: {name} ({path})")
             return name, model
         except Exception as e:
-            logger.error(f"预加载模型 {name} 失败: {str(e)}")
+            model_logger.error(f"预加载模型 {name} 失败: {str(e)}", exc_info=True)
             return name, e
 
-    # 使用线程池并行加载
     with ThreadPoolExecutor(max_workers=min(4, total_tasks)) as executor:
         future_to_model = {executor.submit(load_single_model, name, path): name 
                           for name, path in model_configs.items()}
@@ -63,52 +100,38 @@ def preload_models(device, config, progress_dialog=None):
                     progress_dialog.set_description(f"Loading model: {name} ({completed_tasks}/{total_tasks})")
                     progress_dialog.update_progress(1)
             except Exception as e:
-                logger.error(f"加载模型 {name} 时线程异常: {str(e)}")
-
+                model_logger.error(f"加载模型 {name} 时线程异常: {str(e)}", exc_info=True)
+    logger.info(f"模型预加载完成，共加载 {len(models)} 个模型")
     return models
 
-    # for i, (name, path) in enumerate(model_configs.items()):
-    #     try:
-    #         if progress_dialog:
-    #             progress_dialog.set_description(f"Loading model: {name} ({i+1}/{total_tasks})")
-    #         models[name] = load_model(path, device)
-    #         logger.info(f"预加载模型: {name} ({path})")
-    #         if progress_dialog:
-    #             progress_dialog.update_progress(1)  # 每次加载完成更新进度
-    #     except Exception as e:
-    #         logger.error(f"预加载模型 {name} 失败: {str(e)}")
-    #         # 如果有进度对话框，继续加载其他模型；否则抛出异常
-    #         if not progress_dialog:
-    #             raise
-    # return models
-
 def main():
-    # 加载配置文件
+    logger.debug("程序启动")  # 新增：调试日志
     config = load_config()
-    # 设置设备
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     logger.info(f"使用设备: {device}")
 
-    # 启动GUI
     app = QApplication(sys.argv)
+    logger.debug("QApplication 初始化完成")  # 新增：调试日志
 
-    # 根据加载模式初始化处理器
     if config["load_mode"] == "preload":
-        # 新增：在预加载模式下显示进度对话框
+        logger.debug("进入预加载模式")  # 新增：调试日志
         progress_dialog = ProgressDialog(
             total_tasks=len(config["models"]),
             description="Preloading models..."
         )
         progress_dialog.show()
-        model_cache = preload_models(device, config,progress_dialog) # 预加载模型
-        processor = ImageProcessor(device, model_cache,config) # 初始化处理器并传入模型缓存
-        progress_dialog.accept()  # 加载完成后关闭对话框
-    else:  # "ondemand"
-        processor = ImageProcessor(device,config) # 不预加载模型，需要时再加载
+        model_cache = preload_models(device, config, progress_dialog)
+        processor = ImageProcessor(device, model_cache, config)
+        progress_dialog.accept()
+    else:
+        logger.debug("进入按需加载模式")  # 新增：调试日志
+        processor = ImageProcessor(device, config)
 
-    
+    logger.debug("开始初始化 MainWindow")  # 新增：调试日志
     window = MainWindow(processor, config)
+    logger.debug("MainWindow 初始化完成")  # 新增：调试日志
     window.show()
+    logger.info("窗口显示")
     sys.exit(app.exec_())
 
 if __name__ == "__main__":
