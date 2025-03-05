@@ -1,7 +1,12 @@
+batch:
+  max_batch_size: 16
+  max_batch_threads: 10
 load_mode: preload
-max_batch_size: 16
 models:
   Metal Nut: models/mvtec_metal_nut/ckpt.pth
-preload_chunk_size: 50
-threshold: 1.19
-use_disk_cache: true
+preload:
+  max_memory_mb: 1024
+  max_preload_threads: 9
+  preload_chunk_size: 50
+  use_disk_cache: true
+threshold: 1.09

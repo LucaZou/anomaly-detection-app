@@ -1,9 +1,9 @@
 from PyQt5.QtWidgets import (
     QMainWindow, QLabel, QVBoxLayout, QHBoxLayout, QWidget, QMessageBox, QFormLayout, QDialog,
-    QDoubleSpinBox, QTextEdit, QProgressBar, QFileDialog, QAction, QToolBar, QMenu, QPushButton,
-    QListWidget, QListWidgetItem, QSizePolicy, QStatusBar, QScrollBar, QSlider)
+    QSpinBox, QTextEdit, QFileDialog, QAction, QToolBar, QMenu, QPushButton,QCheckBox,
+    QListWidget, QListWidgetItem, QStatusBar, QSlider)
 from PyQt5.QtGui import QPixmap, QIcon
-from PyQt5.QtCore import Qt, pyqtSignal, QSize
+from PyQt5.QtCore import Qt, QSize
 import os
 import yaml
 from typing import List, Optional, Dict, Any  # 新增：类型提示支持
@@ -15,7 +15,7 @@ import torch
 logger: logging.Logger = logging.getLogger('GUI')
 
 class SettingsDialog(QDialog):
-    def __init__(self, parent: Optional[QMainWindow] = None):
+    def __init__(self, config: Dict[str, Any], parent: Optional[QMainWindow] = None):
         """
         设置对话框,用于未来扩展设置选项。
 
@@ -23,18 +23,70 @@ class SettingsDialog(QDialog):
             parent (Optional[QMainWindow]): 父窗口,默认为None
         """
         super().__init__(parent)
+        self.config: Dict[str, Any] = config
         self.setWindowTitle("Settings")
         self.init_ui()
 
     def init_ui(self) -> None:
         """初始化设置对话框的UI"""
         layout: QFormLayout = QFormLayout()
-        placeholder_label: QLabel = QLabel("Settings will be added here in the future.")
-        layout.addWidget(placeholder_label)
-        save_button: QPushButton = QPushButton("Close")
-        save_button.clicked.connect(self.accept)
+
+        # 预加载参数
+        self.max_preload_threads: QSpinBox = QSpinBox()
+        self.max_preload_threads.setRange(1, 16)
+        self.max_preload_threads.setValue(self.config.get('preload', {}).get('max_preload_threads', 8))
+        layout.addRow("Max Preload Threads:", self.max_preload_threads)
+
+        self.preload_chunk_size: QSpinBox = QSpinBox()
+        self.preload_chunk_size.setRange(10, 1000)
+        self.preload_chunk_size.setValue(self.config.get('preload', {}).get('preload_chunk_size', 100))
+        layout.addRow("Preload Chunk Size:", self.preload_chunk_size)
+
+        self.use_disk_cache: QCheckBox = QCheckBox("Use Disk Cache")
+        self.use_disk_cache.setChecked(self.config.get('preload', {}).get('use_disk_cache', True))
+        layout.addRow("", self.use_disk_cache)
+
+        self.max_memory_mb: QSpinBox = QSpinBox()
+        self.max_memory_mb.setRange(512, 8192)
+        self.max_memory_mb.setValue(self.config.get('preload', {}).get('max_memory_mb', 2048))
+        layout.addRow("Max Memory (MB):", self.max_memory_mb)
+
+        # 批量检测参数
+        self.max_batch_threads: QSpinBox = QSpinBox()
+        self.max_batch_threads.setRange(1, 24)
+        self.max_batch_threads.setValue(self.config.get('batch', {}).get('max_batch_threads', 12))
+        layout.addRow("Max Batch Threads:", self.max_batch_threads)
+
+        self.max_batch_size: QSpinBox = QSpinBox()
+        self.max_batch_size.setRange(1, 64)
+        self.max_batch_size.setValue(self.config.get('batch', {}).get('max_batch_size', 32))
+        layout.addRow("Max Batch Size:", self.max_batch_size)
+
+        # 保存按钮
+        save_button: QPushButton = QPushButton("Save")
+        save_button.clicked.connect(self.save_settings)
         layout.addWidget(save_button)
+
         self.setLayout(layout)
+
+    def save_settings(self) -> None:
+        """保存设置到配置字典并写入文件"""
+        # 更新配置
+        self.config.setdefault('preload', {})
+        self.config['preload']['max_preload_threads'] = self.max_preload_threads.value()
+        self.config['preload']['preload_chunk_size'] = self.preload_chunk_size.value()
+        self.config['preload']['use_disk_cache'] = self.use_disk_cache.isChecked()
+        self.config['preload']['max_memory_mb'] = self.max_memory_mb.value()
+
+        self.config.setdefault('batch', {})
+        self.config['batch']['max_batch_threads'] = self.max_batch_threads.value()
+        self.config['batch']['max_batch_size'] = self.max_batch_size.value()
+
+        # 保存到文件
+        with open("config.yaml", "w", encoding="utf-8") as f:
+            yaml.safe_dump(self.config, f, allow_unicode=True)
+        logger.info("设置已保存到 config.yaml")
+        self.accept()
 
 class MainWindow(QMainWindow):
     def __init__(self, processor: ImageProcessor, config: Dict[str, Any]):
@@ -62,7 +114,7 @@ class MainWindow(QMainWindow):
     def init_ui(self) -> None:
         """初始化主窗口的UI布局"""
         self.setWindowTitle("Anomaly Detection App")
-        self.setGeometry(100, 100, 800, 600)
+        self.setGeometry(100, 100, 900, 600)
 
         toolbar: QToolBar = QToolBar("Tools")
         self.addToolBar(toolbar)
@@ -334,7 +386,7 @@ class MainWindow(QMainWindow):
 
     def open_settings(self) -> None:
         """打开设置对话框"""
-        dialog: SettingsDialog = SettingsDialog(self)
+        dialog: SettingsDialog = SettingsDialog(self.config,self)
         dialog.exec_()
         logger.info("打开设置对话框")
 

@@ -30,17 +30,20 @@ transform: transforms.Compose = transforms.Compose([
 class ImagePreloader:
     """图像预加载器,支持磁盘缓存或内存模式以优化批量检测性能"""
 
-    def __init__(self, max_memory_mb: int = 2048, use_disk_cache: bool = True, device: Optional[torch.device] = None):
+    def __init__(self, config, device: Optional[torch.device] = None):
         """
         初始化图像预加载器。
 
         Args:
-            max_memory_mb (int): 最大内存使用量（MB）,默认为2048
+            max_memory_mb (int): 最大内存使用量(MB),默认为2048
             use_disk_cache (bool): 是否使用磁盘缓存,默认为True
             device (Optional[torch.device]): 运行设备,默认为None
         """
-        self.max_memory_mb: int = max_memory_mb  # 内存限制
-        self.use_disk_cache: bool = use_disk_cache  # 缓存模式标志
+        # self.max_memory_mb: int = max_memory_mb  # 内存限制
+        # self.use_disk_cache: bool = use_disk_cache  # 缓存模式标志
+        self.max_memory_mb: int = config.get('preload', {}).get('max_memory_mb', 2048)  # 内存限制
+        self.use_disk_cache: bool = config.get('preload', {}).get('use_disk_cache', True)  # 缓存模式标志
+        self.max_preload_threads: int = config.get('preload', {}).get('max_preload_threads', 8)  # 最大预加载线程
         self.device: Optional[torch.device] = device  # 设备引用
         self.perf_monitor: PerformanceMonitor = PerformanceMonitor(device)  # 性能监控实例
         if self.use_disk_cache:
@@ -77,9 +80,9 @@ class ImagePreloader:
             chunk_size (int): 每个分片的最大图像数量,默认为100
 
         Returns:
-            List[Any]: 分片引用列表（磁盘模式为文件路径,内存模式为索引）
+            List[Any]: 分片引用列表(磁盘模式为文件路径,内存模式为索引)
         """
-        max_workers: int = min(multiprocessing.cpu_count(), 8)  # 最大线程数
+        max_workers: int = min(multiprocessing.cpu_count(), self.max_preload_threads)  # 最大线程数
         logger.info(f"开始预加载 {len(image_paths)} 张图片,使用 {max_workers} 个线程,"
                     f"缓存模式: {'磁盘' if self.use_disk_cache else '内存'}")
         self.perf_monitor.start_timer()
@@ -128,7 +131,7 @@ class ImagePreloader:
         return preloaded_chunks
 
     def cleanup(self) -> None:
-        """清理缓存资源（磁盘文件或内存分片）"""
+        """清理缓存资源(磁盘文件或内存分片)"""
         if self.use_disk_cache:
             for attempt in range(3):
                 try:
@@ -169,8 +172,9 @@ class BatchDetectWorker(QThread):
         self.device: torch.device = processor.device
         self.config: Dict[str, Any] = processor.config
         self.batch_size: int = self._estimate_batch_size()
-        self.preloader: ImagePreloader = ImagePreloader(use_disk_cache=self.config.get('use_disk_cache', True), device=self.device)
+        self.preloader: ImagePreloader = ImagePreloader(self.config, self.device)
         self.perf_monitor: PerformanceMonitor = PerformanceMonitor(self.device)
+        self.max_batch_threads: int = self.config.get('batch', {}).get('max_batch_threads', 12)  # 从配置读取
 
     def _estimate_batch_size(self) -> int:
         """
@@ -182,9 +186,9 @@ class BatchDetectWorker(QThread):
         total_memory: float = torch.cuda.get_device_properties(self.device).total_memory / 1024**3  # GiB
         reserved_memory: float = torch.cuda.memory_reserved(self.device) / 1024**3  # GiB
         available_memory: float = total_memory - reserved_memory
-        image_memory: float = 0.236  # 单张图像显存占用（GiB）
+        image_memory: float = 0.236  # 单张图像显存占用(GiB)
         safe_memory: float = available_memory - 0.5  # 保留安全余量
-        max_batch_size: int = self.config.get('max_batch_size', 32)
+        max_batch_size: int = self.config.get('batch', {}).get('max_batch_size', 32)  # 从配置读取
         batch_size: int = max(1, min(max_batch_size, int(safe_memory / image_memory)))
         logger.info(f"动态调整 batch_size 为 {batch_size},根据可用内存 {available_memory:.2f} GiB")
         return batch_size
@@ -200,7 +204,7 @@ class BatchDetectWorker(QThread):
         self.perf_monitor.log_memory("Batch Detection Start")
         self.perf_monitor.start_timer()
 
-        chunk_size: int = self.config.get('preload_chunk_size', 100)
+        chunk_size: int = self.config.get('preload', {}).get('preload_chunk_size', 100)
         preloaded_chunks: List[Any] = self.preloader.preload(image_paths, chunk_size)
         self.perf_monitor.log_time("Image Preloading")
 
@@ -210,7 +214,7 @@ class BatchDetectWorker(QThread):
                                else len(self.preloader.memory_chunks[idx]['paths']) 
                                for idx, chunk_file in enumerate(preloaded_chunks))
 
-        with ThreadPoolExecutor(max_workers=12) as executor:
+        with ThreadPoolExecutor(max_workers=self.max_batch_threads) as executor:
             processed_images: int = 0
             for chunk_idx, chunk_ref in enumerate(tqdm(preloaded_chunks, desc="处理图像分片")):
                 if self.preloader.use_disk_cache:
@@ -288,7 +292,7 @@ class ImageProcessor(QObject):
         初始化图像处理器。
 
         Args:
-            device (torch.device): 运行设备（CPU或GPU）
+            device (torch.device): 运行设备(CPU或GPU)
             models (Optional[Dict[str, Any]]): 预加载的模型缓存,默认为None
             config (Optional[Dict[str, Any]]): 配置字典,默认为None
         """

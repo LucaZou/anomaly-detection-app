@@ -35,7 +35,7 @@ def setup_logging() -> logging.Logger:
     console_handler: logging.StreamHandler = logging.StreamHandler()
     console_handler.setLevel(logging.DEBUG)
 
-    # 文件处理器（按大小轮转）
+    # 文件处理器(按大小轮转)
     file_handler: logging.handlers.RotatingFileHandler = logging.handlers.RotatingFileHandler(
         os.path.join(log_dir, "detection_log.txt"),
         maxBytes=5 * 1024 * 1024,  # 5MB
@@ -90,7 +90,7 @@ def preload_models(device: torch.device, config: Dict[str, Any], progress_dialog
     预加载所有模型并缓存。
 
     Args:
-        device (torch.device): 运行设备（CPU或GPU）
+        device (torch.device): 运行设备(CPU或GPU)
         config (Dict[str, Any]): 包含模型配置的字典
         progress_dialog (Optional[ProgressDialog]): 进度对话框,用于显示加载进度
 
