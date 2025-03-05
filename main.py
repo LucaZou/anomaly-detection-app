@@ -101,10 +101,10 @@ def main():
         )
         progress_dialog.show()
         model_cache = preload_models(device, config,progress_dialog) # 预加载模型
-        processor = ImageProcessor(device, model_cache) # 初始化处理器并传入模型缓存
+        processor = ImageProcessor(device, model_cache,config) # 初始化处理器并传入模型缓存
         progress_dialog.accept()  # 加载完成后关闭对话框
     else:  # "ondemand"
-        processor = ImageProcessor(device) # 不预加载模型，需要时再加载
+        processor = ImageProcessor(device,config) # 不预加载模型，需要时再加载
 
     
     window = MainWindow(processor, config)

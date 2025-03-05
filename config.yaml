@@ -1,4 +1,8 @@
-load_mode: ondemand
+# Anomaly Detection App 的配置文件
+load_mode: preload
+threshold: 1.2
+max_batch_size: 16
+preload_chunk_size: 50
+use_disk_cache: True
 models:
   Metal Nut: models/mvtec_metal_nut/ckpt.pth
-threshold: 1.0
