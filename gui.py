@@ -1,6 +1,6 @@
 from PyQt5.QtWidgets import (
-    QMainWindow, QLabel, QVBoxLayout, QHBoxLayout, QWidget, QMessageBox, QFormLayout, QDialog,
-    QSpinBox, QTextEdit, QFileDialog, QAction, QToolBar, QMenu, QPushButton,QCheckBox,
+    QMainWindow, QLabel, QVBoxLayout, QHBoxLayout, QWidget, QMessageBox, QFormLayout, QDialog,QDialogButtonBox,
+    QSpinBox, QTextEdit, QFileDialog, QAction, QToolBar, QMenu, QPushButton,QCheckBox,QTabWidget,QVBoxLayout,
     QListWidget, QListWidgetItem, QStatusBar, QSlider)
 from PyQt5.QtGui import QPixmap, QIcon
 from PyQt5.QtCore import Qt, QSize
@@ -12,6 +12,12 @@ from progress_dialog import ProgressDialog, ProgressWorker
 import logging
 from image_processor import ImageProcessor
 import torch
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas  # 新增：Matplotlib 画布
+from matplotlib.figure import Figure  # 新增：Matplotlib 图表
+from matplotlib import pyplot as plt
+import json
+from report_generator import ReportGenerator
+
 
 logger: logging.Logger = logging.getLogger('GUI')
 
@@ -92,6 +98,73 @@ class SettingsDialog(QDialog):
         logger.info("设置已保存到 config.yaml，保留注释")
         self.accept()
 
+class HistoryDialog(QDialog):
+    """历史记录查看对话框"""
+    def __init__(self, report_generator: 'ReportGenerator', parent=None):
+        super().__init__(parent)
+        self.report_generator = report_generator
+        self.setWindowTitle("Detection History")
+        self.setMinimumSize(600, 400)
+        self.init_ui()
+
+    def init_ui(self) -> None:
+        layout = QVBoxLayout()
+
+        self.history_list = QListWidget()
+        self.load_history()
+        self.history_list.itemDoubleClicked.connect(self.load_selected_report)
+        layout.addWidget(self.history_list)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.accepted.connect(self.on_ok_clicked)  # 修改：绑定新方法
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self.setLayout(layout)
+        
+    def on_ok_clicked(self) -> None:
+        """点击 OK 时加载选中的报告"""
+        selected_items = self.history_list.selectedItems()
+        if not selected_items:
+            QMessageBox.warning(self, "警告", "请先选择一条历史记录")
+            return
+        self.load_selected_report(selected_items[0])  # 加载选中的第一条记录
+
+    def load_history(self) -> None:
+        """加载历史记录到列表"""
+        try:
+            with open(self.report_generator.history_file, 'r', encoding='utf-8') as f:
+                history = json.load(f)
+            self.history_list.clear()
+            for entry in reversed(history):  # 按时间倒序显示
+                item_text = (f"{entry['timestamp']} - Model: {entry['model_name']} - "
+                           f"Images: {entry['image_count']} - Anomalies: {entry['stats']['anomaly_count']}")
+                item = QListWidgetItem(item_text)
+                item.setData(Qt.UserRole, entry)
+                self.history_list.addItem(item)
+        except Exception as e:
+            logger.error(f"加载历史记录失败: {str(e)}", exc_info=True)
+            QMessageBox.critical(self, "错误", f"加载历史记录失败: {str(e)}")
+
+    def load_selected_report(self, item: QListWidgetItem) -> None:
+        """加载选中的历史报告"""
+        report = item.data(Qt.UserRole)
+        # 修改：从历史文件中重新加载完整报告
+        try:
+            with open(self.report_generator.history_file, 'r', encoding='utf-8') as f:
+                history = json.load(f)
+            full_report = next((r for r in history if r["timestamp"] == report["timestamp"]), None)
+            if full_report:
+                self.parent().update_report(full_report)  # 使用完整报告
+            else:
+                logger.error(f"未找到时间戳为 {report['timestamp']} 的完整报告")
+                QMessageBox.warning(self, "警告", "无法加载完整报告数据")
+        except Exception as e:
+            logger.error(f"加载完整报告失败: {str(e)}", exc_info=True)
+            QMessageBox.critical(self, "错误", f"加载完整报告失败: {str(e)}")
+        self.accept()
+
 class MainWindow(QMainWindow):
     def __init__(self, processor: ImageProcessor, config: Dict[str, Any]):
         """
@@ -114,6 +187,7 @@ class MainWindow(QMainWindow):
         self.init_ui()
         self.connect_signals()
         logger.debug("MainWindow 初始化完成")
+        self.current_report = None  # 新增：存储当前报告数据
 
     def init_ui(self) -> None:
         """初始化主窗口的UI布局"""
@@ -146,6 +220,7 @@ class MainWindow(QMainWindow):
         options_action: QAction = QAction("Options", self)
         options_action.setMenu(options_menu)
         options_menu.addAction("Settings", self.open_settings)
+        options_menu.addAction("View History", self.open_history)
         toolbar.addAction(options_action)
 
         main_widget: QWidget = QWidget()
@@ -181,11 +256,18 @@ class MainWindow(QMainWindow):
         self.update_status_bar()
         right_layout.addWidget(self.status_bar)
 
+        # 新增：选项卡控件
+        self.tab_widget = QTabWidget()
+        right_layout.addWidget(self.tab_widget)
+
+        image_tab = QWidget()
+        image_layout = QVBoxLayout(image_tab)
         self.image_label: QLabel = QLabel("No image loaded")
         self.image_label.setAlignment(Qt.AlignCenter)
         self.image_label.setMinimumSize(400, 300)
         self.image_label.setAcceptDrops(True)
-        right_layout.addWidget(self.image_label)
+        # right_layout.addWidget(self.image_label)
+        image_layout.addWidget(self.image_label)
 
         self.thumbnail_list: QListWidget = QListWidget()
         self.thumbnail_list.setFlow(QListWidget.LeftToRight)
@@ -194,8 +276,27 @@ class MainWindow(QMainWindow):
         self.thumbnail_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.thumbnail_list.itemClicked.connect(self.select_thumbnail)
         self.thumbnail_list.setToolTip("Click to view image")
-        right_layout.addWidget(self.thumbnail_list)
+        image_layout.addWidget(self.thumbnail_list)
+        self.tab_widget.addTab(image_tab, "Image View")
 
+        # 报告选项卡
+        self.report_tab = QWidget()
+        self.report_layout = QVBoxLayout(self.report_tab)
+        self.report_text = QTextEdit()
+        self.report_text.setReadOnly(True)
+        self.report_layout.addWidget(self.report_text)
+
+        # Matplotlib 画布
+        self.report_figure = Figure()
+        self.report_canvas = FigureCanvas(self.report_figure)
+        self.report_layout.addWidget(self.report_canvas)
+        # 新增：导出按钮
+        export_button = QPushButton("Export Report")
+        export_button.clicked.connect(self.export_report)
+        self.report_layout.addWidget(export_button)
+        self.tab_widget.addTab(self.report_tab, "Report")
+
+        # 日志容器
         self.log_container: QWidget = QWidget()
         log_layout: QVBoxLayout = QVBoxLayout(self.log_container)
         self.log_toggle_button: QPushButton = QPushButton("Show Log")
@@ -217,6 +318,83 @@ class MainWindow(QMainWindow):
         self.processor.log_message.connect(self.update_log)
         self.processor.progress_updated.connect(self.update_progress)
         self.processor.batch_finished.connect(self.show_batch_results)
+        self.processor.report_generated.connect(self.update_report)
+
+    def update_report(self, report: Dict[str, Any]) -> None:
+        """更新报告选项卡内容"""
+        self.current_report = report
+        stats = report["stats"]
+        
+        # 更新统计信息
+        report_text = (
+            f"检测时间: {report['timestamp']}\n"
+            f"总图像数: {stats['total_images']}\n"
+            f"异常图像数: {stats['anomaly_count']}\n"
+            f"异常比例: {stats['anomaly_ratio']:.2%}\n"
+            f"平均得分: {stats['mean_score']:.2f}\n"
+            f"得分中位数: {stats['median_score']:.2f}\n"
+            f"得分标准差: {stats['std_score']:.2f}\n"
+            f"最低得分: {stats['min_score']:.2f}\n"
+            f"最高得分: {stats['max_score']:.2f}"
+            f"异常程度: 正常={stats['anomaly_levels']['normal']}, "
+            f"轻微={stats['anomaly_levels']['mild']}, "
+            f"中度={stats['anomaly_levels']['moderate']}, "
+            f"严重={stats['anomaly_levels']['severe']}"
+        )
+        self.report_text.setText(report_text)
+
+        # 更新图表：显示所有图表
+        self.report_figure.clear()
+        for i, (chart_name, chart_path) in enumerate(report["charts"].items()):
+            ax = self.report_figure.add_subplot(len(report["charts"]), 1, i + 1)
+            img = plt.imread(chart_path)
+            ax.imshow(img)
+            ax.axis('off')
+            ax.set_title(chart_name.capitalize())
+        self.report_figure.tight_layout()
+        self.report_canvas.draw()
+
+        # 新增：同步更新图像视图
+        if "image_paths" in report and "scores" in report:
+            self.result_paths = report["image_paths"]
+            self.detection_infos = [f"异常得分: {score:.2f} - {'检测到异常' if score > report['threshold'] else '图像正常'}"
+                                  for score in report["scores"]]
+            self.current_index = 0
+            if self.result_paths:
+                self.show_result(self.result_paths[self.current_index])
+                self.detection_info_label.setText(f"检测信息: {self.detection_infos[self.current_index]}")
+                self.update_thumbnails()
+            self.update_status_bar()
+
+        # 切换到报告选项卡
+        self.tab_widget.setCurrentIndex(1)  # 1 是 Report 选项卡的索引
+        logger.info("报告选项卡已更新")
+
+    def export_report(self) -> None:
+        """导出当前报告为 CSV 和 PDF"""
+        if not self.current_report:
+            QMessageBox.warning(self, "警告", "当前无报告可导出")
+            return
+        
+        # 新增：检查报告数据完整性
+        if "image_paths" not in self.current_report or "scores" not in self.current_report:
+            QMessageBox.warning(self, "警告", "当前报告数据不完整，无法导出 CSV（缺少图像路径或得分）")
+            logger.warning("尝试导出报告，但缺少 image_paths 或 scores")
+            return
+        
+        filename, _ = QFileDialog.getSaveFileName(self, "保存报告", f"report_{self.current_report['timestamp']}", "CSV (*.csv);;PDF (*.pdf)")
+        if filename:
+            if filename.endswith('.csv'):
+                self.processor.report_generator.export_to_csv(self.current_report, filename)
+            elif filename.endswith('.pdf'):
+                self.processor.report_generator.export_to_pdf(self.current_report, filename)
+            logger.info(f"报告已导出到: {filename}")
+
+    def open_history(self) -> None:
+        """打开历史记录对话框"""
+        dialog = HistoryDialog(self.processor.report_generator, self)
+        dialog.exec_()
+        logger.info("打开历史记录对话框")
 
     def dragEnterEvent(self, event: Any) -> None:
         """处理拖入事件"""
@@ -398,8 +576,10 @@ class MainWindow(QMainWindow):
         """更新异常检测阈值并保存到配置"""
         self.threshold = new_threshold
         self.config["threshold"] = self.threshold
+        yaml = YAML()  # 创建 ruamel.yaml 实例
+        yaml.preserve_quotes = True
         with open("config.yaml", "w", encoding="utf-8") as f:
-            yaml.safe_dump(self.config, f, allow_unicode=True)
+            yaml.dump(self.config, f)  # 使用 ruamel.yaml 保存，保留注释
         if self.result_paths and self.detection_infos:
             for i in range(len(self.detection_infos)):
                 score: float = float(self.detection_infos[i].split("异常得分: ")[1].split(" - ")[0])

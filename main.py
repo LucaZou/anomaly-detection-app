@@ -11,6 +11,7 @@ from image_processor import ImageProcessor
 from ruamel.yaml import YAML
 from progress_dialog import ProgressDialog
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from report_generator import ReportGenerator
 
 # 配置日志
 log_dir: str = "./logs"  # 日志存储目录
@@ -55,14 +56,14 @@ def setup_logging() -> logging.Logger:
     logger.addHandler(console_handler)
     logger.addHandler(file_handler)
 
-    # 为子模块设置日志器并绑定处理器
-    for module in ['ModelLoader', 'ImageProcessor', 'GUI']:
-        sub_logger: logging.Logger = logging.getLogger(module)
+    # 为所有模块添加日志支持
+    for module in ['ModelLoader', 'ImageProcessor', 'GUI', 'ReportGenerator']:
+        sub_logger = logging.getLogger(module)
         sub_logger.setLevel(logging.DEBUG)
         if not sub_logger.handlers:
             sub_logger.addHandler(console_handler)
             sub_logger.addHandler(file_handler)
-
+    
     return logger
 
 logger: logging.Logger = setup_logging()
@@ -184,3 +185,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+    

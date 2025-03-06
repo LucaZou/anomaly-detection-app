@@ -15,6 +15,7 @@ import time
 from typing import List, Optional, Dict, Any, Tuple  # 新增：类型提示支持
 from exceptions import DetectionError
 from performance_monitor import PerformanceMonitor
+from report_generator import ReportGenerator
 
 # 配置模块日志器
 logger: logging.Logger = logging.getLogger('ImageProcessor')
@@ -286,6 +287,7 @@ class ImageProcessor(QObject):
     progress_updated = pyqtSignal(int)  # 进度更新信号
     log_message = pyqtSignal(str)  # 日志消息信号
     batch_finished = pyqtSignal(list)  # 批量检测完成信号
+    report_generated = pyqtSignal(dict)  # 新增信号，用于传递报告数据
 
     def __init__(self, device: torch.device, models: Optional[Dict[str, Any]] = None, config: Optional[Dict[str, Any]] = None):
         """
@@ -305,6 +307,7 @@ class ImageProcessor(QObject):
         self.batch_worker: Optional[BatchDetectWorker] = None
         self.config: Dict[str, Any] = config or {}
         self.perf_monitor: PerformanceMonitor = PerformanceMonitor(device)
+        self.report_generator = ReportGenerator(self.output_base_dir)  # 新增报告生成器实例
         logger.debug("ImageProcessor 初始化完成")
 
     def update_output_dir(self) -> None:
@@ -431,6 +434,21 @@ class ImageProcessor(QObject):
         self.batch_worker = BatchDetectWorker(self, input_dir, threshold)
         self.batch_worker.progress_updated.connect(self.progress_updated.emit)
         self.batch_worker.log_message.connect(self.log_message.emit)
-        self.batch_worker.batch_finished.connect(self.batch_finished.emit)
+        # self.batch_worker.batch_finished.connect(self.batch_finished.emit)
+        self.batch_worker.batch_finished.connect(self._handle_batch_finished)  # 修改为新方法
         self.batch_worker.start()
         logger.info(f"启动批量检测任务: {input_dir}")
+
+    def _handle_batch_finished(self, results: List[Any]) -> None:
+        """处理批量检测完成，生成报告并发出信号"""
+        output_paths, detection_infos = results
+        scores = [float(info.split("异常得分: ")[1].split(" - ")[0]) for info in detection_infos]
+        report = self.report_generator.generate_report(
+            output_paths, 
+            scores, 
+            self.config.get("threshold", 1.20),
+            model_name=self.current_model_name,  # 新增：传递模型名称
+            input_dir=self.batch_worker.input_dir  # 新增：传递输入目录
+        )
+        self.batch_finished.emit([output_paths, detection_infos])
+        self.report_generated.emit(report)  # 发出报告信号

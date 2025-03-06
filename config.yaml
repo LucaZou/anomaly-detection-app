@@ -1,7 +1,8 @@
+load_mode: preload
+threshold: 0.91
 batch:
   max_batch_size: 16
   max_batch_threads: 8
-load_mode: preload 
 # 模型路径
 models:
   Metal Nut: models/mvtec_metal_nut/ckpt.pth
@@ -23,5 +24,4 @@ preload:
   max_memory_mb: 2048
   max_preload_threads: 8
   preload_chunk_size: 50
-  use_disk_cache: true
-threshold: 1.09
+  use_disk_cache: false
