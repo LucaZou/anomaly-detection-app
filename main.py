@@ -8,7 +8,7 @@ from PyQt5.QtWidgets import QApplication
 from gui import MainWindow
 from model_loader import load_model
 from image_processor import ImageProcessor
-import yaml
+from ruamel.yaml import YAML
 from progress_dialog import ProgressDialog
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -25,7 +25,9 @@ def setup_logging() -> logging.Logger:
     """
     # 主日志器
     logger: logging.Logger = logging.getLogger('AnomalyDetection')
-    logger.setLevel(logging.DEBUG)  # 设置日志级别为DEBUG以捕获所有信息
+    # logger.setLevel(logging.DEBUG)  # 设置日志级别为DEBUG以捕获所有信息
+    logger.setLevel(logging.INFO)  # 设置日志级别为DEBUG以捕获所有信息
+
 
     # 清空已有处理器,避免重复添加
     if logger.handlers:
@@ -76,9 +78,12 @@ def load_config() -> Dict[str, Any]:
         Exception: 如果文件读取或解析失败
     """
     logger.debug("开始加载配置文件 config.yaml")
+    yaml = YAML()
+    yaml.preserve_quotes = True
+    # yaml.allow_duplicate_keys = True
     try:
         with open("config.yaml", "r", encoding="utf-8") as f:
-            config: Dict[str, Any] = yaml.safe_load(f)
+            config: Dict[str, Any] = yaml.load(f)
         logger.info("配置文件加载成功")
         return config
     except Exception as e:

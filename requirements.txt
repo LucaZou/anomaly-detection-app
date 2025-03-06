@@ -1,5 +1,5 @@
 PyYAML~=6.0.2
-PyQt5~=5.15.11
+PyQt5~=5.15.9
 torch~=1.13.0+cu117
 numpy~=1.22.4
 tqdm~=4.67.1
@@ -12,3 +12,4 @@ pandas~=1.5.0
 scikit-learn~=1.6.0
 scikit-image~=0.24.0
 timm~=1.0.12
+psutil~=6.1.1

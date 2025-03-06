@@ -6,6 +6,7 @@ from PyQt5.QtGui import QPixmap, QIcon
 from PyQt5.QtCore import Qt, QSize
 import os
 import yaml
+from ruamel.yaml import YAML
 from typing import List, Optional, Dict, Any  # 新增：类型提示支持
 from progress_dialog import ProgressDialog, ProgressWorker
 import logging
@@ -83,9 +84,12 @@ class SettingsDialog(QDialog):
         self.config['batch']['max_batch_size'] = self.max_batch_size.value()
 
         # 保存到文件
+        yaml = YAML()
+        yaml.preserve_quotes = True
+        # yaml.allow_duplicate_keys = True
         with open("config.yaml", "w", encoding="utf-8") as f:
-            yaml.safe_dump(self.config, f, allow_unicode=True)
-        logger.info("设置已保存到 config.yaml")
+            yaml.dump(self.config, f)
+        logger.info("设置已保存到 config.yaml，保留注释")
         self.accept()
 
 class MainWindow(QMainWindow):
