@@ -24,4 +24,4 @@ preload:
   max_memory_mb: 2048
   max_preload_threads: 8
   preload_chunk_size: 50
-  use_disk_cache: false
+  use_disk_cache: true

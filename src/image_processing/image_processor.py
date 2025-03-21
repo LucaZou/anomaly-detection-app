@@ -13,9 +13,9 @@ import multiprocessing
 import tempfile
 import time
 from typing import List, Optional, Dict, Any, Tuple  # 新增：类型提示支持
-from exceptions import DetectionError
-from performance_monitor import PerformanceMonitor
-from report_generator import ReportGenerator
+from src.common.exceptions import DetectionError
+from src.performance_monitoring.performance_monitor import PerformanceMonitor
+from src.report_generation.report_generator import ReportGenerator
 
 # 配置模块日志器
 logger: logging.Logger = logging.getLogger('ImageProcessor')
@@ -326,7 +326,7 @@ class ImageProcessor(QObject):
             model_name (str): 模型名称
             model_path (Optional[str]): 模型文件路径,默认为None
         """
-        from model_loader import load_model  # 延迟导入避免循环依赖
+        from src.model_loading.model_loader import load_model  # 延迟导入避免循环依赖
         if model_name in self.model_cache:
             self.model = self.model_cache[model_name]
             self.model_path = model_path or list(self.model_cache.keys())[list(self.model_cache.values()).index(self.model)]

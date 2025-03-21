@@ -8,15 +8,15 @@ import os
 import yaml
 from ruamel.yaml import YAML
 from typing import List, Optional, Dict, Any  # 新增：类型提示支持
-from progress_dialog import ProgressDialog, ProgressWorker
+from src.gui.progress_dialog import ProgressDialog, ProgressWorker
 import logging
-from image_processor import ImageProcessor
+from src.image_processing.image_processor import ImageProcessor
 import torch
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas  # 新增：Matplotlib 画布
 from matplotlib.figure import Figure  # 新增：Matplotlib 图表
 from matplotlib import pyplot as plt
 import json
-from report_generator import ReportGenerator
+from src.report_generation.report_generator import ReportGenerator
 
 
 logger: logging.Logger = logging.getLogger('GUI')

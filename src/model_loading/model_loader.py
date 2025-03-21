@@ -1,6 +1,6 @@
 import torch
 from torchvision.models import wide_resnet50_2, Wide_ResNet50_2_Weights
-import simplenet
+from src.backbones import simplenet
 import logging
 
 logger = logging.getLogger(__name__)

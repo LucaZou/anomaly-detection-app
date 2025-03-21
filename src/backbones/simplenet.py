@@ -19,9 +19,9 @@ import tqdm
 import psutil
 from torch.utils.tensorboard import SummaryWriter
 
-import common
-import metrics
-from utils import plot_segmentation_images
+from src.common import common
+from src.metrics import metrics
+from src.common.utils import plot_segmentation_images
 
 LOGGER = logging.getLogger(__name__)
 

@@ -4,7 +4,7 @@ import torchvision.models as models  # noqa
 
 def load_ref_wrn50():
     
-    import resnet 
+    from src.backbones import resnet
     return resnet.wide_resnet50_2(True)
 
 _BACKBONES = {

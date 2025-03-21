@@ -5,13 +5,12 @@ import logging
 import logging.handlers
 from typing import Dict, Optional, Any  # 新增：类型提示支持
 from PyQt5.QtWidgets import QApplication
-from gui import MainWindow
-from model_loader import load_model
-from image_processor import ImageProcessor
 from ruamel.yaml import YAML
-from progress_dialog import ProgressDialog
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from report_generator import ReportGenerator
+from src.gui.gui import MainWindow
+from src.model_loading.model_loader import load_model
+from src.image_processing.image_processor import ImageProcessor
+from src.gui.progress_dialog import ProgressDialog
 
 # 配置日志
 log_dir: str = "./logs"  # 日志存储目录
