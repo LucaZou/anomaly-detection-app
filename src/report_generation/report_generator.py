@@ -2,7 +2,7 @@
 import os
 import numpy as np
 import matplotlib.pyplot as plt
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 import logging
 from datetime import datetime
 import json
@@ -167,7 +167,7 @@ class ReportGenerator:
         plt.ylabel("Frequency")
         plt.legend()
         output_path = os.path.join(self.output_dir, f"histogram_{timestamp}.png")
-        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        plt.savefig(output_path, dpi=600, bbox_inches='tight')
         plt.close()
         return output_path
 
@@ -180,7 +180,7 @@ class ReportGenerator:
         plt.xlabel("Score")
         plt.legend()
         output_path = os.path.join(self.output_dir, f"boxplot_{timestamp}.png")
-        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        plt.savefig(output_path, dpi=600, bbox_inches='tight')
         plt.close()
         return output_path
     

@@ -1,4 +1,4 @@
-load_mode: preload
+load_mode: ondemand # ondemand, preload
 threshold: 0.91
 batch:
   max_batch_size: 16
@@ -6,21 +6,22 @@ batch:
 # 模型路径
 models:
   Metal Nut: models/mvtec_metal_nut/ckpt.pth
-  # Screw: models/mvtec_screw/ckpt.pth
-  # Bottle: models/mvtec_bottle/ckpt.pth
-  # Grid: models/mvtec_grid/ckpt.pth
-  # Capsule: models/mvtec_capsule/ckpt.pth
-  # Toothbrush: models/mvtec_toothbrush/ckpt.pth
-  # Cable: models/mvtec_cable/ckpt.pth
-  # Leather: models/mvtec_leather/ckpt.pth
-  # Zipper: models/mvtec_zipper/ckpt.pth
-  # Transistor: models/mvtec_transistor/ckpt.pth
-  # Wood: models/mvtec_wood/ckpt.pth
-  # Tile: models/mvtec_tile/ckpt.pth
-  # Hazelnut: models/mvtec_hazelnut/ckpt.pth
-  # Carpet: models/mvtec_carpet/ckpt.pth
-  # Pill: models/mvtec_pill/ckpt.pth
-preload:
+  Screw: models/mvtec_screw/ckpt.pth
+  Bottle: models/mvtec_bottle/ckpt.pth
+  Grid: models/mvtec_grid/ckpt.pth
+  Capsule: models/mvtec_capsule/ckpt.pth
+  Toothbrush: models/mvtec_toothbrush/ckpt.pth
+  Cable: models/mvtec_cable/ckpt.pth
+  Leather: models/mvtec_leather/ckpt.pth
+  Zipper: models/mvtec_zipper/ckpt.pth
+  Transistor: models/mvtec_transistor/ckpt.pth
+  Wood: models/mvtec_wood/ckpt.pth
+  Tile: models/mvtec_tile/ckpt.pth
+  Hazelnut: models/mvtec_hazelnut/ckpt.pth
+  Carpet: models/mvtec_carpet/ckpt.pth
+  Pill: models/mvtec_pill/ckpt.pth
+
+preload: # 批量加载时预加载图片配置
   max_memory_mb: 2048
   max_preload_threads: 8
   preload_chunk_size: 50

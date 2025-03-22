@@ -1,11 +1,10 @@
 from PyQt5.QtWidgets import (
-    QMainWindow, QLabel, QVBoxLayout, QHBoxLayout, QWidget, QMessageBox, QFormLayout, QDialog,QDialogButtonBox,
-    QSpinBox, QTextEdit, QFileDialog, QAction, QToolBar, QMenu, QPushButton,QCheckBox,QTabWidget,QVBoxLayout,
+    QMainWindow, QLabel, QHBoxLayout, QWidget, QMessageBox, QFormLayout, QDialog, QDialogButtonBox,QScrollArea,
+    QSpinBox, QTextEdit, QFileDialog, QAction, QToolBar, QMenu, QPushButton, QCheckBox, QTabWidget, QVBoxLayout,
     QListWidget, QListWidgetItem, QStatusBar, QSlider)
 from PyQt5.QtGui import QPixmap, QIcon
 from PyQt5.QtCore import Qt, QSize
 import os
-import yaml
 from ruamel.yaml import YAML
 from typing import List, Optional, Dict, Any  # 新增：类型提示支持
 from src.gui.progress_dialog import ProgressDialog, ProgressWorker
@@ -18,8 +17,8 @@ from matplotlib import pyplot as plt
 import json
 from src.report_generation.report_generator import ReportGenerator
 
-
 logger: logging.Logger = logging.getLogger('GUI')
+
 
 class SettingsDialog(QDialog):
     def __init__(self, config: Dict[str, Any], parent: Optional[QMainWindow] = None):
@@ -92,14 +91,15 @@ class SettingsDialog(QDialog):
         # 保存到文件
         yaml = YAML()
         yaml.preserve_quotes = True
-        # yaml.allow_duplicate_keys = True
         with open("config.yaml", "w", encoding="utf-8") as f:
             yaml.dump(self.config, f)
         logger.info("设置已保存到 config.yaml，保留注释")
         self.accept()
 
+
 class HistoryDialog(QDialog):
     """历史记录查看对话框"""
+
     def __init__(self, report_generator: 'ReportGenerator', parent=None):
         super().__init__(parent)
         self.report_generator = report_generator
@@ -122,7 +122,7 @@ class HistoryDialog(QDialog):
         layout.addWidget(buttons)
 
         self.setLayout(layout)
-        
+
     def on_ok_clicked(self) -> None:
         """点击 OK 时加载选中的报告"""
         selected_items = self.history_list.selectedItems()
@@ -139,7 +139,7 @@ class HistoryDialog(QDialog):
             self.history_list.clear()
             for entry in reversed(history):  # 按时间倒序显示
                 item_text = (f"{entry['timestamp']} - Model: {entry['model_name']} - "
-                           f"Images: {entry['image_count']} - Anomalies: {entry['stats']['anomaly_count']}")
+                             f"Images: {entry['image_count']} - Anomalies: {entry['stats']['anomaly_count']}")
                 item = QListWidgetItem(item_text)
                 item.setData(Qt.UserRole, entry)
                 self.history_list.addItem(item)
@@ -164,6 +164,7 @@ class HistoryDialog(QDialog):
             logger.error(f"加载完整报告失败: {str(e)}", exc_info=True)
             QMessageBox.critical(self, "错误", f"加载完整报告失败: {str(e)}")
         self.accept()
+
 
 class MainWindow(QMainWindow):
     def __init__(self, processor: ImageProcessor, config: Dict[str, Any]):
@@ -192,7 +193,7 @@ class MainWindow(QMainWindow):
     def init_ui(self) -> None:
         """初始化主窗口的UI布局"""
         self.setWindowTitle("Anomaly Detection App")
-        self.setGeometry(100, 100, 900, 600)
+        self.setGeometry(100, 100, 1300, 900)
 
         toolbar: QToolBar = QToolBar("Tools")
         self.addToolBar(toolbar)
@@ -204,7 +205,7 @@ class MainWindow(QMainWindow):
         self.models: Dict[str, str] = self.config["models"]
         for i, model_name in enumerate(self.models.keys()):
             action: QAction = self.model_menu.addAction(model_name, lambda name=model_name: self.select_model(name))
-            action.setShortcut(f"Ctrl+{i+1}")
+            action.setShortcut(f"Ctrl+{i + 1}")
         toolbar.addAction(model_action)
 
         # 检测菜单
@@ -239,10 +240,16 @@ class MainWindow(QMainWindow):
         self.threshold_slider.setValue(int(self.threshold * 100))
         self.threshold_slider.valueChanged.connect(self.update_threshold_directly)
         threshold_value_label: QLabel = QLabel(f"{self.threshold:.2f}")
-        self.threshold_slider.valueChanged.connect(lambda v: threshold_value_label.setText(f"{v/100:.2f}"))
+        self.threshold_slider.valueChanged.connect(lambda v: threshold_value_label.setText(f"{v / 100:.2f}"))
         left_layout.addWidget(threshold_label)
         left_layout.addWidget(self.threshold_slider)
         left_layout.addWidget(threshold_value_label)
+
+        # 修改：新增统计信息显示区域
+        self.stats_label: QLabel = QLabel("统计信息: 未检测")
+        self.stats_label.setWordWrap(True)  # 支持自动换行
+        self.stats_label.setMinimumHeight(200)  # 设置最小高度以容纳多行文本
+        left_layout.addWidget(self.stats_label)
 
         self.detection_info_label: QLabel = QLabel("检测信息: 未检测")
         left_layout.addWidget(self.detection_info_label)
@@ -266,7 +273,6 @@ class MainWindow(QMainWindow):
         self.image_label.setAlignment(Qt.AlignCenter)
         self.image_label.setMinimumSize(400, 300)
         self.image_label.setAcceptDrops(True)
-        # right_layout.addWidget(self.image_label)
         image_layout.addWidget(self.image_label)
 
         self.thumbnail_list: QListWidget = QListWidget()
@@ -282,14 +288,19 @@ class MainWindow(QMainWindow):
         # 报告选项卡
         self.report_tab = QWidget()
         self.report_layout = QVBoxLayout(self.report_tab)
-        self.report_text = QTextEdit()
-        self.report_text.setReadOnly(True)
-        self.report_layout.addWidget(self.report_text)
+
+        # 修改：使用 QScrollArea 包裹画布
+        self.report_scroll = QScrollArea()
+        self.report_scroll.setWidgetResizable(True)  # 自动调整内容大小
+        self.report_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.report_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
 
         # Matplotlib 画布
         self.report_figure = Figure()
         self.report_canvas = FigureCanvas(self.report_figure)
-        self.report_layout.addWidget(self.report_canvas)
+        self.report_canvas.setMinimumSize(800, 600)  # 设置最小尺寸，确保初始可见性
+        self.report_scroll.setWidget(self.report_canvas)  # 将画布放入滚动区域
+        self.report_layout.addWidget(self.report_scroll)
         # 新增：导出按钮
         export_button = QPushButton("Export Report")
         export_button.clicked.connect(self.export_report)
@@ -324,9 +335,9 @@ class MainWindow(QMainWindow):
         """更新报告选项卡内容"""
         self.current_report = report
         stats = report["stats"]
-        
+
         # 更新统计信息
-        report_text = (
+        stats_text = (
             f"检测时间: {report['timestamp']}\n"
             f"总图像数: {stats['total_images']}\n"
             f"异常图像数: {stats['anomaly_count']}\n"
@@ -341,24 +352,30 @@ class MainWindow(QMainWindow):
             f"中度={stats['anomaly_levels']['moderate']}, "
             f"严重={stats['anomaly_levels']['severe']}"
         )
-        self.report_text.setText(report_text)
+        self.stats_label.setText(stats_text)
 
-        # 更新图表：显示所有图表
+        # 显示所有图表
         self.report_figure.clear()
+        num_charts = len(report["charts"])
+        # 设置画布尺寸，动态调整高度以适应图表数量
+        self.report_figure.set_size_inches(10, 6 * num_charts)  # 宽度8英寸，每张图4英寸高
         for i, (chart_name, chart_path) in enumerate(report["charts"].items()):
             ax = self.report_figure.add_subplot(len(report["charts"]), 1, i + 1)
             img = plt.imread(chart_path)
             ax.imshow(img)
             ax.axis('off')
-            ax.set_title(chart_name.capitalize())
-        self.report_figure.tight_layout()
+            ax.set_title(chart_name.capitalize(), fontsize=10)
+        self.report_figure.tight_layout(pad=2.0)
         self.report_canvas.draw()
+        # 新增：调整滚动区域的初始视图
+        self.report_scroll.verticalScrollBar().setValue(0)  # 滚动到顶部
 
-        # 新增：同步更新图像视图
+        # 同步更新图像视图
         if "image_paths" in report and "scores" in report:
             self.result_paths = report["image_paths"]
-            self.detection_infos = [f"异常得分: {score:.2f} - {'检测到异常' if score > report['threshold'] else '图像正常'}"
-                                  for score in report["scores"]]
+            self.detection_infos = [
+                f"异常得分: {score:.2f} - {'检测到异常' if score > report['threshold'] else '图像正常'}"
+                for score in report["scores"]]
             self.current_index = 0
             if self.result_paths:
                 self.show_result(self.result_paths[self.current_index])
@@ -375,14 +392,15 @@ class MainWindow(QMainWindow):
         if not self.current_report:
             QMessageBox.warning(self, "警告", "当前无报告可导出")
             return
-        
+
         # 新增：检查报告数据完整性
         if "image_paths" not in self.current_report or "scores" not in self.current_report:
             QMessageBox.warning(self, "警告", "当前报告数据不完整，无法导出 CSV（缺少图像路径或得分）")
             logger.warning("尝试导出报告，但缺少 image_paths 或 scores")
             return
-        
-        filename, _ = QFileDialog.getSaveFileName(self, "保存报告", f"report_{self.current_report['timestamp']}", "CSV (*.csv);;PDF (*.pdf)")
+
+        filename, _ = QFileDialog.getSaveFileName(self, "保存报告", f"report_{self.current_report['timestamp']}",
+                                                  "CSV (*.csv);;PDF (*.pdf)")
         if filename:
             if filename.endswith('.csv'):
                 self.processor.report_generator.export_to_csv(self.current_report, filename)
@@ -538,7 +556,7 @@ class MainWindow(QMainWindow):
         """更新状态栏信息"""
         image_name: str = os.path.basename(self.result_paths[self.current_index]) if self.result_paths else "未加载"
         if torch.cuda.is_available():
-            allocated_memory: float = torch.cuda.memory_allocated(self.processor.device) / 1024**3
+            allocated_memory: float = torch.cuda.memory_allocated(self.processor.device) / 1024 ** 3
             status_text: str = f"Model: {self.current_model_name} | Image: {image_name} | GPU Memory: {allocated_memory:.2f} GiB"
             if self.performance_info:
                 status_text += f" | {self.performance_info}"
@@ -568,7 +586,7 @@ class MainWindow(QMainWindow):
 
     def open_settings(self) -> None:
         """打开设置对话框"""
-        dialog: SettingsDialog = SettingsDialog(self.config,self)
+        dialog: SettingsDialog = SettingsDialog(self.config, self)
         dialog.exec_()
         logger.info("打开设置对话框")
 
@@ -583,7 +601,8 @@ class MainWindow(QMainWindow):
         if self.result_paths and self.detection_infos:
             for i in range(len(self.detection_infos)):
                 score: float = float(self.detection_infos[i].split("异常得分: ")[1].split(" - ")[0])
-                self.detection_infos[i] = f"异常得分: {score:.2f} - {'检测到异常' if score > self.threshold else '图像正常'}"
+                self.detection_infos[
+                    i] = f"异常得分: {score:.2f} - {'检测到异常' if score > self.threshold else '图像正常'}"
             self.detection_info_label.setText(f"检测信息: {self.detection_infos[self.current_index]}")
             self.update_thumbnails()
         logger.info(f"阈值已更新为: {self.threshold}")
