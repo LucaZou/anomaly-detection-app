@@ -4,17 +4,19 @@ from PyQt5.QtWidgets import (
     QListWidget, QListWidgetItem, QStatusBar, QSlider)
 from PyQt5.QtGui import QPixmap, QIcon
 from PyQt5.QtCore import Qt, QSize
-import os
-from ruamel.yaml import YAML
-from typing import List, Optional, Dict, Any  # 新增：类型提示支持
-from src.gui.progress_dialog import ProgressDialog, ProgressWorker
-import logging
-from src.image_processing.image_processor import ImageProcessor
 import torch
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas  # 新增：Matplotlib 画布
 from matplotlib.figure import Figure  # 新增：Matplotlib 图表
 from matplotlib import pyplot as plt
 import json
+import os
+import logging
+from ruamel.yaml import YAML
+import tempfile
+import shutil
+from typing import List, Optional, Dict, Any  # 新增：类型提示支持
+from src.gui.progress_dialog import ProgressDialog, ProgressWorker
+from src.image_processing.image_processor import ImageProcessor
 from src.report_generation.report_generator import ReportGenerator
 
 logger: logging.Logger = logging.getLogger('GUI')
@@ -29,6 +31,12 @@ class SettingsDialog(QDialog):
             parent (Optional[QMainWindow]): 父窗口,默认为None
         """
         super().__init__(parent)
+        self.max_batch_size = None
+        self.max_batch_threads = None
+        self.max_memory_mb = None
+        self.use_disk_cache = None
+        self.preload_chunk_size = None
+        self.max_preload_threads = None
         self.config: Dict[str, Any] = config
         self.setWindowTitle("Settings")
         self.init_ui()
@@ -91,10 +99,20 @@ class SettingsDialog(QDialog):
         # 保存到文件
         yaml = YAML()
         yaml.preserve_quotes = True
-        with open("config.yaml", "w", encoding="utf-8") as f:
-            yaml.dump(self.config, f)
-        logger.info("设置已保存到 config.yaml，保留注释")
-        self.accept()
+        config_path = "config.yaml"
+        try:
+            with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', delete=False) as temp_file:
+                yaml.dump(self.config, temp_file)
+            shutil.move(temp_file.name, config_path)  # 原子性替换
+            logger.info("设置已保存到 config.yaml，保留注释")
+            self.accept()
+        except Exception as e:
+            logger.error(f"保存配置文件失败: {str(e)}", exc_info=True)
+            QMessageBox.critical(self, "错误", f"保存设置失败: {str(e)}")
+            try:
+                os.unlink(temp_file.name)  # 清理临时文件
+            except:
+                pass
 
 
 class HistoryDialog(QDialog):
@@ -500,6 +518,8 @@ class MainWindow(QMainWindow):
                 self.current_model_name = model_name
                 self.update_status_bar()
                 logger.info(f"模型已切换为: {model_name} ({model_path})")
+                if self.threshold != self.config.get("threshold", 1.20):
+                    self.update_threshold(self.threshold)
             progress_dialog.accept()
 
         worker.finished.connect(on_finished)
@@ -594,18 +614,33 @@ class MainWindow(QMainWindow):
         """更新异常检测阈值并保存到配置"""
         self.threshold = new_threshold
         self.config["threshold"] = self.threshold
-        yaml = YAML()  # 创建 ruamel.yaml 实例
+        # 保存到临时文件，成功后再替换原文件
+        yaml = YAML()
         yaml.preserve_quotes = True
-        with open("config.yaml", "w", encoding="utf-8") as f:
-            yaml.dump(self.config, f)  # 使用 ruamel.yaml 保存，保留注释
+        config_path = "config.yaml"
+        try:
+            with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', delete=False) as temp_file:
+                yaml.dump(self.config, temp_file)
+            shutil.move(temp_file.name, config_path)  # 原子性替换
+            logger.info(f"阈值已更新为: {self.threshold}")
+        except Exception as e:
+            logger.error(f"保存阈值到配置文件失败: {str(e)}", exc_info=True)
+            QMessageBox.critical(self, "错误", f"保存阈值失败: {str(e)}")
+            return  # 提前返回，避免后续逻辑因保存失败而崩溃
+
+        # 更新检测信息（仅当有结果时）
         if self.result_paths and self.detection_infos:
             for i in range(len(self.detection_infos)):
-                score: float = float(self.detection_infos[i].split("异常得分: ")[1].split(" - ")[0])
-                self.detection_infos[
-                    i] = f"异常得分: {score:.2f} - {'检测到异常' if score > self.threshold else '图像正常'}"
+                try:
+                    score = float(self.detection_infos[i].split("异常得分: ")[1].split(" - ")[0])
+                    self.detection_infos[i] = (
+                        f"异常得分: {score:.2f} - {'检测到异常' if score > self.threshold else '图像正常'}"
+                    )
+                except (IndexError, ValueError) as e:
+                    logger.warning(f"更新检测信息失败 (索引 {i}): {str(e)}")
+                    continue
             self.detection_info_label.setText(f"检测信息: {self.detection_infos[self.current_index]}")
             self.update_thumbnails()
-        logger.info(f"阈值已更新为: {self.threshold}")
 
     def update_threshold_directly(self, value: int) -> None:
         """直接从滑块更新阈值"""
